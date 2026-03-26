@@ -7,12 +7,16 @@ interface DocumentTreeProps {
   initialTreeData: DocumentNode[];
   fileName: string | null;
   fileSize: string | null;
+  pdfUrl?: string | null;
   onSave: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
   onExport: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
 }
 
-export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fileName, fileSize, onSave, onExport }) => {
+
+export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fileName, fileSize, pdfUrl, onSave, onExport }) => {
   const [treeData, setTreeData] = useState<DocumentNode[]>(initialTreeData);
+  const [isPreviewVisible, setIsPreviewVisible] = useState(true);
+
 
   useEffect(() => {
     setTreeData(initialTreeData);
@@ -114,32 +118,91 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
             </div>
         </section>
 
-        <section className="bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 md:mb-8">
-                <div>
-                    <h3 className="font-headline text-base md:text-lg font-bold">문서 구조 트리</h3>
-                    <p className="text-xs md:text-sm text-outline mt-1 break-keep">작성 및 변환이 필요한 섹션을 체크하세요.</p>
+        <div className="flex flex-col xl:flex-row items-stretch gap-6 md:gap-10">
+            {/* 왼쪽: 문서 구조 트리 */}
+            <section className="flex-1 bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 md:mb-8">
+                    <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-3">
+                            <h3 className="font-headline text-base md:text-lg font-bold truncate">문서 구조 트리</h3>
+                            {!isPreviewVisible && (
+                                <button 
+                                    onClick={() => setIsPreviewVisible(true)}
+                                    className="px-2 py-1 text-[10px] font-bold text-primary bg-primary/10 rounded hover:bg-primary/20 transition-all flex items-center gap-1 animate-pulse"
+                                >
+                                    <span className="material-symbols-outlined text-xs">visibility</span> 원본 미리보기 열기
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-xs md:text-sm text-outline mt-1 break-keep">작성 및 변환이 필요한 섹션을 체크하세요.</p>
+                    </div>
+                    <div className="flex gap-2 sm:gap-3 self-end sm:self-auto shrink-0">
+                        <button onClick={() => handleSelectAll(false)} className="px-3 md:px-4 py-1.5 md:py-2 text-[0.65rem] md:text-xs font-bold text-outline hover:text-on-surface hover:bg-surface-container transition-all rounded-lg uppercase tracking-wider">전체 해제</button>
+                        <button onClick={() => handleSelectAll(true)} className="px-3 md:px-4 py-1.5 md:py-2 text-[0.65rem] md:text-xs font-bold text-primary hover:bg-primary-fixed/30 transition-all rounded-lg uppercase tracking-wider bg-primary-fixed/10">전체 선택</button>
+                    </div>
                 </div>
-                <div className="flex gap-2 sm:gap-3 self-end sm:self-auto shrink-0">
-                    <button onClick={() => handleSelectAll(false)} className="px-3 md:px-4 py-1.5 md:py-2 text-[0.65rem] md:text-xs font-bold text-outline hover:text-on-surface hover:bg-surface-container transition-all rounded-lg uppercase tracking-wider">전체 해제</button>
-                    <button onClick={() => handleSelectAll(true)} className="px-3 md:px-4 py-1.5 md:py-2 text-[0.65rem] md:text-xs font-bold text-primary hover:bg-primary-fixed/30 transition-all rounded-lg uppercase tracking-wider bg-primary-fixed/10">전체 선택</button>
-                </div>
-            </div>
 
-            <div className="space-y-4">
-               {treeData.map(node => (
-                 <TreeNode 
-                    key={node.id} 
-                    node={node} 
-                    onToggleCheck={handleToggleCheck} 
-                    onToggleContentCheck={handleToggleContentCheck} 
-                    onUpdateProperty={handleUpdateProperty}
-                    level={0} 
-                 />
-               ))}
-            </div>
-        </section>
+                <div className="space-y-4 overflow-y-auto">
+                   {treeData.map(node => (
+                     <TreeNode 
+                        key={node.id} 
+                        node={node} 
+                        onToggleCheck={handleToggleCheck} 
+                        onToggleContentCheck={handleToggleContentCheck} 
+                        onUpdateProperty={handleUpdateProperty}
+                        level={0} 
+                     />
+                   ))}
+                </div>
+            </section>
+
+            {/* 오른쪽: PDF 미리보기 */}
+            {isPreviewVisible && (
+                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right">
+                    <div className="flex items-center justify-between px-5 py-3 bg-surface-container-high/50 border-b border-outline-variant/10">
+                        <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-primary text-sm">visibility</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-outline">원본 문서 미리보기</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            {pdfUrl && (
+                                <a 
+                                    href={`http://127.0.0.1:8000${pdfUrl}`} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1"
+                                >
+                                    <span className="material-symbols-outlined text-[12px]">open_in_new</span> 새 탭에서 열기
+                                </a>
+                            )}
+                            <button 
+                                onClick={() => setIsPreviewVisible(false)}
+                                className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-surface-container-highest text-outline transition-colors"
+                            >
+                                <span className="material-symbols-outlined text-sm">close</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 bg-surface-container-lowest relative min-h-[600px] xl:min-h-0">
+                        {pdfUrl ? (
+                            <iframe 
+                                src={`http://127.0.0.1:8000${pdfUrl}#toolbar=0`} 
+                                className="w-full h-full border-none"
+                                title="PDF Preview"
+                            />
+                        ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-outline gap-4 p-10 text-center">
+                                <span className="material-symbols-outlined text-4xl opacity-20">picture_as_pdf</span>
+                                <p className="text-xs font-medium">PDF 미리보기를 생성할 수 없습니다.<br/>원본 한글 파일 형식을 확인해주세요.</p>
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
+        </div>
+
       </div>
+
 
       <footer className="fixed bottom-0 left-0 lg:left-80 w-full lg:w-[calc(100%-20rem)] bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 p-4 md:p-6 z-40 transition-all duration-300">
           <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">

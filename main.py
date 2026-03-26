@@ -1,5 +1,7 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from routers import project
 
 app = FastAPI(
@@ -7,6 +9,14 @@ app = FastAPI(
     description="Business Plan Analyzer API",
     version="1.0.0"
 )
+
+# Static files (for PDF preview)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 
 # CORS 구성 (프론트엔드 연동 지원)
 app.add_middleware(

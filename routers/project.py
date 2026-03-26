@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from services.parser_service import parse_document
 from models.database import get_db, Project
 from models.project_models import ProjectSaveRequest
+from services.pdf_service import convert_hwpx_to_pdf
+
 
 router = APIRouter(prefix="/api", tags=["Projects"])
 
@@ -35,6 +37,12 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         # 실제 파싱 로직 호출 (Gemini API 등)
         document_tree = parse_document(filepath)
 
+        # PDF 변환 (1번 방식: 한컴오피스 대용)
+        pdf_filename = f"{document_id}.pdf"
+        pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
+        # 백그라운드에서 실행 (FastAPI 스레드풀 활용 가능하나 우선 직렬 실행으로 안정성 확보)
+        convert_hwpx_to_pdf(filepath, pdf_path)
+
         # DB에 초기 파싱 결과를 곧바로 캐싱
         project = Project(
             document_id=document_id,
@@ -46,8 +54,10 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
         return {
             "document_id": document_id,
-            "tree": document_tree
+            "tree": document_tree,
+            "pdf_url": f"/uploads/{pdf_filename}"
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -182,8 +192,10 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
         "filename": project.filename,
         "tree": tree,
         "selected_node_ids": project.selected_node_ids,
-        "content_node_ids": project.content_node_ids
+        "content_node_ids": project.content_node_ids,
+        "pdf_url": f"/uploads/{document_id}.pdf"
     }
+
 
 @router.delete("/projects/{document_id}")
 async def delete_project(document_id: str, db: Session = Depends(get_db)):

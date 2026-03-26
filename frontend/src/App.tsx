@@ -15,7 +15,9 @@ function App() {
   const [treeData, setTreeData] = useState<DocumentNode[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState<string | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [projectList, setProjectList] = useState<any[]>([]);
+
 
   useEffect(() => {
      if (activeView === 'projects') {
@@ -42,6 +44,7 @@ function App() {
       setTreeData(res.tree || []);
       setFileName(file.name);
       setFileSize((file.size / 1024 / 1024).toFixed(2) + 'MB');
+      setPdfUrl(res.pdf_url);
       setActiveView('analysis');
     } catch (err) {
       alert("업로드 중 오류가 발생했습니다: " + err);
@@ -93,6 +96,7 @@ function App() {
       setTreeData(res.tree || []);
       setFileName(res.filename);
       setFileSize("저장됨");
+      setPdfUrl(res.pdf_url);
       setActiveView('analysis');
     } catch (err) {
       alert("프로젝트를 불러오지 못했습니다: " + err);
@@ -132,6 +136,7 @@ function App() {
                 initialTreeData={treeData} 
                 fileName={fileName}
                 fileSize={fileSize}
+                pdfUrl={pdfUrl}
                 onSave={handleSave} 
                 onExport={handleExport} 
             />
