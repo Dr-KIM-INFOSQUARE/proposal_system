@@ -5,59 +5,91 @@ interface LoadingOverlayProps {
 }
 
 export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ isVisible }) => {
-  const [progress, setProgress] = useState(0);
+  const [messageIndex, setMessageIndex] = useState(0);
+  const messages = [
+    "문서 포맷 확인 및 텍스트 추출 중...", // 0~5s
+    "표 및 이미지 요소 분리 중...",              // 5~20s
+    "AI가 문서의 계층 구조를 추론하고 있습니다...", // 20~40s
+    "최종 트리 데이터를 생성 중입니다..."      // 40s~
+  ];
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (isVisible) {
-      setProgress(0);
-      // 실제 소요시간(약 30~45초)을 반영하여 95%까지 서서히 차오르도록 시뮬레이션
-      interval = setInterval(() => {
-        setProgress(prev => {
-          if (prev >= 95) return 95;
-          // 구간별 증가 폭: 예상 대기 시간에 맞춰 대폭 하향 조정
-          const increment = prev < 60 ? 2 : prev < 85 ? 0.8 : 0.3;
-          return prev + increment;
-        });
-      }, 500);
-    } else {
-      // When invisible, jump to 100
-      setProgress(100);
+    if (!isVisible) {
+      setMessageIndex(0);
+      return;
     }
-    return () => clearInterval(interval);
+
+    const start = Date.now();
+    const timers = [
+      setTimeout(() => setMessageIndex(1), 5000),
+      setTimeout(() => setMessageIndex(2), 20000),
+      setTimeout(() => setMessageIndex(3), 40000),
+    ];
+
+    return () => timers.forEach(t => clearTimeout(t));
   }, [isVisible]);
 
   if (!isVisible) return null;
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm">
-      <div className="bg-surface-container-lowest p-8 rounded-2xl shadow-xl flex flex-col items-center max-w-sm w-full border border-outline-variant/20 mx-4">
-        <div className="relative w-16 h-16 mb-6">
-          <svg className="animate-spin w-full h-full text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25 text-primary-fixed" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center text-primary font-bold text-sm">
-            AI
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-surface/80 backdrop-blur-md transition-all duration-500">
+      <style>{`
+        @keyframes scan {
+          0%, 100% { transform: translateY(0); opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          50% { transform: translateY(80px); }
+        }
+        .animate-scan {
+          animation: scan 3s ease-in-out infinite;
+        }
+      `}</style>
+      
+      <div className="bg-surface-container-lowest p-10 rounded-3xl shadow-[0_24px_48px_-12px_rgba(0,0,0,0.18)] flex flex-col items-center max-w-md w-full border border-outline-variant/20 mx-4 relative overflow-hidden">
+        {/* 장식용 배경 광원 */}
+        <div className="absolute -top-24 -left-24 w-48 h-48 bg-primary/5 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-secondary/5 rounded-full blur-3xl"></div>
+
+        {/* 스캐닝 애니메이션 영역 */}
+        <div className="relative w-24 h-24 mb-10 group">
+          {/* 문서 아이콘 */}
+          <div className="absolute inset-0 flex items-center justify-center bg-surface-container-high rounded-2xl border border-outline-variant/30 shadow-inner overflow-hidden">
+            <span className="material-symbols-outlined text-5xl text-primary/40 select-none">description</span>
+            
+            {/* 스캔 라인 */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent shadow-[0_0_12px_rgba(var(--primary-rgb),0.8)] animate-scan z-10"></div>
+            
+            {/* 내부 장식 줄무늬 */}
+            <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 4px, currentColor 4px, currentColor 5px)' }}></div>
           </div>
+          
+          {/* 외곽 회전 링 */}
+          <div className="absolute -inset-3 border-2 border-dashed border-primary/20 rounded-3xl animate-[spin_20s_linear_infinite]"></div>
         </div>
         
-        <h3 className="text-xl font-headline font-bold text-on-surface mb-2">문서 구조 분석 중</h3>
-        <p className="text-sm text-outline text-center mb-6">
-          Gemini AI가 업로드된 양식의 복잡한 표와 계층 구조를<br />
-          꼼꼼하게 파싱하고 있습니다. 잠시만 기다려주세요...
-        </p>
+        <div className="text-center space-y-3 relative z-10">
+          <h3 className="text-2xl font-headline font-bold text-on-surface tracking-tight">AI 엔진 분석 중</h3>
+          <div className="h-6 flex items-center justify-center">
+            <p className="text-sm font-medium text-primary animate-pulse transition-all duration-500 ease-in-out">
+              {messages[messageIndex]}
+            </p>
+          </div>
+          <p className="text-[11px] text-outline mt-4 uppercase tracking-[0.2em] font-bold opacity-60">
+            Generating intelligent structure
+          </p>
+        </div>
+
+        {/* 하단 점진적 로딩 바 (장식용) */}
+        <div className="w-full mt-8 h-1 bg-surface-container rounded-full overflow-hidden">
+          <div className="h-full bg-primary animate-[loading_2s_infinite_ease-in-out]" style={{ width: '30%' }}></div>
+        </div>
         
-        <div className="w-full bg-surface-container-high rounded-full h-2.5 mb-2 overflow-hidden">
-          <div 
-            className="bg-primary h-2.5 rounded-full transition-all duration-500 ease-out" 
-            style={{ width: `${progress}%` }}
-          ></div>
-        </div>
-        <div className="w-full flex justify-between text-xs text-outline font-medium">
-          <span>진행률</span>
-          <span>{Math.round(progress)}%</span>
-        </div>
+        <style>{`
+          @keyframes loading {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+          }
+        `}</style>
       </div>
     </div>
   );

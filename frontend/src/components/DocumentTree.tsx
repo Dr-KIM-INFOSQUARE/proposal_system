@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TreeNode } from './TreeNode';
 import type { DocumentNode } from '../types';
-import { toggleNode, toggleContentNode } from '../utils/treeLogic';
+import { toggleNode, toggleContentNode, updateNodeProperty } from '../utils/treeLogic';
 
 interface DocumentTreeProps {
   initialTreeData: DocumentNode[];
@@ -25,6 +25,11 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
   const handleToggleContentCheck = (id: string | number, checked: boolean) => {
     setTreeData(prev => toggleContentNode(prev, id, checked));
   };
+
+  const handleUpdateProperty = (id: string | number, property: keyof DocumentNode, value: any) => {
+    setTreeData(prev => updateNodeProperty(prev, id, property, value));
+  };
+
 
   const handleSelectAll = (checked: boolean) => {
     const newTree = JSON.parse(JSON.stringify(treeData));
@@ -51,11 +56,15 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
       const contentIds: (string | number)[] = [];
       const collectChecked = (nodes: DocumentNode[]) => {
           nodes.forEach(n => {
-              if (n.checked) selectedIds.push(n.id);
+              if (n.checked) {
+                  // If exported, include userInstruction
+                  selectedIds.push(n.id);
+              }
               if (n.contentChecked) contentIds.push(n.id);
               if (n.children) collectChecked(n.children);
           });
       };
+
       collectChecked(treeData);
       return { selectedIds, contentIds };
   };
@@ -119,7 +128,14 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
 
             <div className="space-y-4">
                {treeData.map(node => (
-                 <TreeNode key={node.id} node={node} onToggleCheck={handleToggleCheck} onToggleContentCheck={handleToggleContentCheck} level={0} />
+                 <TreeNode 
+                    key={node.id} 
+                    node={node} 
+                    onToggleCheck={handleToggleCheck} 
+                    onToggleContentCheck={handleToggleContentCheck} 
+                    onUpdateProperty={handleUpdateProperty}
+                    level={0} 
+                 />
                ))}
             </div>
         </section>

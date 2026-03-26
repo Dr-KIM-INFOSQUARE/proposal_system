@@ -116,7 +116,6 @@ function App() {
 
   return (
     <div className="flex min-h-screen relative font-body text-on-surface bg-surface">
-      <LoadingOverlay isVisible={isUploading} />
       <Sidebar 
         isOpen={isSidebarOpen} 
         activeView={activeView} 
@@ -148,6 +147,7 @@ function App() {
           </div>
         )}
       </main>
+      <LoadingOverlay isVisible={isUploading} />
     </div>
   );
 }

@@ -5,5 +5,8 @@ export interface DocumentNode {
   checked: boolean;
   contentChecked?: boolean;
   indeterminate?: boolean;
+  writingGuide?: string | null;
+  userInstruction?: string | null;
+  tableMetadata?: string | null;
   children?: DocumentNode[];
 }

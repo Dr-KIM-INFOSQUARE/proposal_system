@@ -124,6 +124,9 @@ async def export_project(document_id: str, db: Session = Depends(get_db)):
                     "title": n["title"],
                     "type": n.get("type", "heading"),
                     "content": n["id"] in content_set,
+                    "tableMetadata": n.get("tableMetadata"),
+                    "writingGuide": n.get("writingGuide"),
+                    "userInstruction": n.get("userInstruction"),
                     "children": children_filtered
                 }
                 result.append(new_node)

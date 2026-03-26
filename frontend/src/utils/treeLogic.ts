@@ -54,6 +54,25 @@ export const toggleNode = (tree: DocumentNode[], targetId: string | number, chec
   return newTree;
 };
 
+export const updateNodeProperty = (tree: DocumentNode[], targetId: string | number, property: keyof DocumentNode, value: any): DocumentNode[] => {
+  const newTree = JSON.parse(JSON.stringify(tree));
+  const updateRecursive = (nodes: DocumentNode[]): boolean => {
+    for (const node of nodes) {
+      if (node.id === targetId) {
+        (node as any)[property] = value;
+        return true;
+      }
+      if (node.children && updateRecursive(node.children)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  updateRecursive(newTree);
+  return newTree;
+};
+
+
 export const toggleContentNode = (tree: DocumentNode[], targetId: string | number, checkState: boolean): DocumentNode[] => {
   const newTree = JSON.parse(JSON.stringify(tree));
   const toggleRecursive = (nodes: DocumentNode[]) => {

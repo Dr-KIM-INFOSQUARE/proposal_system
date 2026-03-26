@@ -11,8 +11,8 @@ NS = {
 }
 
 def get_para_text(p_elem):
-    """문단 내의 모든 텍스트 요소를 합쳐 문자열로 반환"""
-    return "".join([t.text for t in p_elem.iter() if t.tag.endswith('}t') and t.text])
+    """문단 내의 모든 텍스트 요소를 합쳐 문자열로 반환 (fwSpace 등 보이지 않는 제어문자 사이의 텍스트 포함)"""
+    return "".join(p_elem.itertext())
 
 def extract_hwpx_to_markdown(file_path: str) -> str:
     """HWPX 파일의 Contents/section.xml을 분석하여 마크다운 텍스트(표 포함)로 순차 추출합니다."""
