@@ -7,10 +7,10 @@ interface LoadingOverlayProps {
 export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ isVisible }) => {
   const [messageIndex, setMessageIndex] = useState(0);
   const messages = [
-    "문서 포맷 확인 및 텍스트 추출 중...", // 0~5s
-    "표 및 이미지 요소 분리 중...",              // 5~20s
-    "AI가 문서의 계층 구조를 추론하고 있습니다...", // 20~40s
-    "최종 트리 데이터를 생성 중입니다..."      // 40s~
+    "문서 포맷 확인 및 텍스트 추출 중...", // 0~20s
+    "표 및 이미지 요소 분리 중...",              // 20~40s
+    "AI가 문서의 계층 구조를 추론하고 있습니다...", // 40~90s
+    "최종 트리 데이터를 생성 중입니다..."      // 90s~
   ];
 
   useEffect(() => {
@@ -21,9 +21,9 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ isVisible }) => 
 
     const start = Date.now();
     const timers = [
-      setTimeout(() => setMessageIndex(1), 5000),
-      setTimeout(() => setMessageIndex(2), 20000),
-      setTimeout(() => setMessageIndex(3), 40000),
+      setTimeout(() => setMessageIndex(1), 20000),
+      setTimeout(() => setMessageIndex(2), 40000),
+      setTimeout(() => setMessageIndex(3), 90000),
     ];
 
     return () => timers.forEach(t => clearTimeout(t));

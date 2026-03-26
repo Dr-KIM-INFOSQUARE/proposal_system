@@ -10,16 +10,43 @@ interface DocumentTreeProps {
   pdfUrl?: string | null;
   onSave: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
   onExport: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
+  onReanalyze?: () => void;
+  isAnalyzing?: boolean;
 }
 
 
-export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fileName, fileSize, pdfUrl, onSave, onExport }) => {
+export const DocumentTree: React.FC<DocumentTreeProps> = ({ 
+    initialTreeData, 
+    fileName, 
+    fileSize, 
+    pdfUrl, 
+    onSave, 
+    onExport,
+    onReanalyze,
+    isAnalyzing
+}) => {
   const [treeData, setTreeData] = useState<DocumentNode[]>(initialTreeData);
   const [isPreviewVisible, setIsPreviewVisible] = useState(true);
 
 
   useEffect(() => {
-    setTreeData(initialTreeData);
+    // 트리 데이터 초기 로드 시 모든 항목을 기본적으로 체크 상태로 설정
+    const initializeTree = (nodes: DocumentNode[]): DocumentNode[] => {
+      return nodes.map(node => {
+        const hasChildren = node.children && node.children.length > 0;
+        return {
+          ...node,
+          // 섹션 선택은 모두 기본 체크
+          checked: node.checked !== undefined ? node.checked : true,
+          // 컨텐츠 작상 대상은 하위 항목이 없을 때만 기본 체크
+          contentChecked: node.contentChecked !== undefined 
+            ? node.contentChecked 
+            : !hasChildren,
+          children: node.children ? initializeTree(node.children) : []
+        };
+      });
+    };
+    setTreeData(initializeTree(initialTreeData));
   }, [initialTreeData]);
 
   const handleToggleCheck = (id: string | number, checked: boolean) => {
@@ -113,8 +140,23 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
                 </div>
             </div>
             <div className="w-full xl:w-auto flex flex-row xl:flex-col items-center xl:items-end justify-between xl:justify-center border-t xl:border-t-0 pt-4 xl:pt-0 border-outline-variant/10">
-                <span className="text-[0.6875rem] font-label uppercase tracking-widest text-outline block mb-0 xl:mb-1">상태</span>
-                <div className="flex items-center gap-2 text-primary font-bold text-sm md:text-base"><span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span> 구조 분석 완료</div>
+                <div className="flex flex-col items-center xl:items-end gap-2">
+                    <span className="text-[0.6875rem] font-label uppercase tracking-widest text-outline block mb-0 xl:mb-1">상태</span>
+                    <div className="flex items-center gap-2 text-primary font-bold text-sm md:text-base">
+                        <span className={`w-2 h-2 rounded-full bg-primary ${isAnalyzing ? 'animate-ping' : 'animate-pulse'}`}></span> 
+                        {isAnalyzing ? '분석 진행 중...' : '구조 분석 완료'}
+                    </div>
+                    {onReanalyze && (
+                        <button 
+                            onClick={onReanalyze}
+                            disabled={isAnalyzing}
+                            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-primary/30 text-primary text-[10px] md:text-xs font-bold rounded-lg hover:bg-primary/5 transition-all disabled:opacity-50 shadow-sm"
+                        >
+                            <span className="material-symbols-outlined text-sm">refresh</span>
+                            모델 다시 분석
+                        </button>
+                    )}
+                </div>
             </div>
         </section>
 
@@ -204,7 +246,7 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({ initialTreeData, fil
       </div>
 
 
-      <footer className="fixed bottom-0 left-0 lg:left-80 w-full lg:w-[calc(100%-20rem)] bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 p-4 md:p-6 z-40 transition-all duration-300">
+      <footer className="fixed bottom-0 left-0 lg:left-96 w-full lg:w-[calc(100%-24rem)] bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 p-4 md:p-6 z-40 transition-all duration-300">
           <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center justify-center sm:justify-start w-full sm:w-auto gap-2 sm:gap-4 text-outline text-xs sm:text-sm">
                   <span className="material-symbols-outlined text-primary text-lg sm:text-xl">verified_user</span> 

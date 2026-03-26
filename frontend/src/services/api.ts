@@ -1,17 +1,31 @@
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 export const api = {
-  uploadDocument: async (file: File) => {
+  uploadDocument: async (file: File, modelId: string = "models/gemini-3-flash-preview") => {
     const formData = new FormData();
     formData.append('file', file);
     
-    const response = await fetch(`${API_BASE_URL}/upload`, {
+    // 쿼리 파라미터로 model_id 전달
+    const response = await fetch(`${API_BASE_URL}/upload?model_id=${modelId}`, {
       method: 'POST',
       body: formData,
     });
     
     if (!response.ok) {
-      throw new Error(`Upload failed: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `Upload failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  reanalyzeProject: async (documentId: string, modelId: string = "models/gemini-3-flash-preview") => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/reanalyze?model_id=${modelId}`, {
+      method: 'POST',
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `Re-analysis failed: ${response.statusText}`);
     }
     return response.json();
   },
@@ -66,6 +80,14 @@ export const api = {
     });
     if (!response.ok) {
         throw new Error(`Failed to delete project: ${response.statusText}`);
+    }
+    return response.json();
+  },
+  
+  getUsage: async () => {
+    const response = await fetch(`${API_BASE_URL}/usage`);
+    if (!response.ok) {
+        throw new Error(`Failed to load usage data: ${response.statusText}`);
     }
     return response.json();
   }

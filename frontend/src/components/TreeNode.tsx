@@ -48,8 +48,8 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
             {node.type === 'table' && (
               <span className="bg-primary-fixed text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-primary uppercase tracking-wider">표</span>
             )}
-            {node.type === 'info' && (
-               <span className="bg-surface-container-highest text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-outline uppercase tracking-wider">안내</span>
+            {node.type === 'item' && (
+               <span className="bg-surface-container-highest text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-outline uppercase tracking-wider">세부항목</span>
             )}
             {node.writingGuide && (
                <span className="flex items-center gap-1 text-[10px] text-primary font-bold">

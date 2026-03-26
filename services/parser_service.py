@@ -121,12 +121,17 @@ def parse_docx(filepath: str) -> list:
 
     return tree
 
-def parse_document(filepath: str) -> list:
-    """확장자에 따라 적절한 파서를 호출합니다."""
+def parse_document(filepath: str, model_id: str = "models/gemini-3-flash-preview") -> dict:
+    """확장자에 따라 적절한 파서를 호출하여 {nodes, usage} 구조를 반환합니다."""
     ext = filepath.lower().split('.')[-1]
     
+    usage_empty = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
     if ext == "docx":
-        return parse_docx(filepath)
+        return {
+            "nodes": parse_docx(filepath),
+            "usage": usage_empty # DOCX는 로컬 파싱하므로 AI 사용량 0
+        }
     elif ext == "hwpx":
         from services.hwpx_extractor import extract_hwpx_to_markdown
         from services.gemini_service import analyze_structure_with_gemini
@@ -134,17 +139,20 @@ def parse_document(filepath: str) -> list:
         # 1. HWPX 원본에서 텍스트/표 마크다운 순차 추출
         raw_markdown = extract_hwpx_to_markdown(filepath)
         if not raw_markdown:
-            return []
+            return {"nodes": [], "usage": usage_empty}
             
         # 2. 추출된 데이터를 Gemini API로 넘겨 지능적 계층 트리 반환
-        return analyze_structure_with_gemini(raw_markdown)
+        return analyze_structure_with_gemini(raw_markdown, model_id=model_id)
     else:
         # 지원하지 않는 포맷
-        return [
-            {
-                "id": 1,
-                "title": f"지원하지 않거나 준비 중인 포맷 ({ext})",
-                "type": "heading",
-                "children": []
-            }
-        ]
+        return {
+            "nodes": [
+                {
+                    "id": 1,
+                    "title": f"지원하지 않거나 준비 중인 포맷 ({ext})",
+                    "type": "heading",
+                    "children": []
+                }
+            ],
+            "usage": usage_empty
+        }

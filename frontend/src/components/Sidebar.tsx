@@ -1,15 +1,27 @@
 import React, { useRef } from 'react';
+import { ModelSelector } from './ModelSelector';
 
 interface SidebarProps {
   isOpen: boolean;
-  activeView: 'analysis' | 'projects';
+  activeView: 'analysis' | 'projects' | 'billing';
   onToggle: () => void;
-  onViewChange: (view: 'analysis' | 'projects') => void;
+  onViewChange: (view: 'analysis' | 'projects' | 'billing') => void;
   onUpload: (file: File) => void;
   isUploading: boolean;
+  selectedModel: string;
+  onModelChange: (modelId: string) => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, activeView, onToggle, onViewChange, onUpload, isUploading }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ 
+  isOpen, 
+  activeView, 
+  onToggle, 
+  onViewChange, 
+  onUpload, 
+  isUploading,
+  selectedModel,
+  onModelChange
+}) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -31,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, activeView, onToggle, 
         className={`fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity ${isOpen ? 'block opacity-100' : 'hidden opacity-0 pointer-events-none'}`} 
         onClick={onToggle}
       />
-      <aside className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-80 flex flex-col bg-[#f2f4f6] dark:bg-slate-900 border-r border-outline-variant/20 overflow-y-auto transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 lg:w-96 flex flex-col bg-[#f2f4f6] dark:bg-slate-900 border-r border-outline-variant/20 overflow-y-auto transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-6 lg:p-8 flex flex-col h-full min-h-[100vh]">
           <div className="flex items-center justify-between mb-10">
             <div className="flex items-center gap-3">
@@ -63,9 +75,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, activeView, onToggle, 
               <span className="material-symbols-outlined">folder</span>
               <span>프로젝트</span>
             </a>
+            <a 
+              onClick={() => onViewChange('billing')} 
+              className={`flex items-center gap-3 py-3 px-4 lg:px-6 transition-all cursor-pointer rounded-r-lg border-l-4 ${activeView === 'billing' ? 'bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 border-blue-600 dark:border-blue-500 font-semibold' : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-[#e0e3e5] dark:hover:bg-slate-800 border-transparent font-medium'}`}
+            >
+              <span className="material-symbols-outlined">payments</span>
+              <span>비용 관리</span>
+            </a>
           </nav>
 
           <div className="mt-auto pb-4">
+            <div className="mb-6">
+              <ModelSelector 
+                selectedModel={selectedModel} 
+                onModelChange={onModelChange} 
+                disabled={isUploading}
+              />
+            </div>
+
             <div 
               onClick={triggerUpload}
               className={`group relative border-2 border-dashed ${isUploading ? 'border-primary bg-primary-fixed/20' : 'border-outline-variant hover:border-primary'} transition-all rounded-xl p-6 bg-surface-container flex flex-col items-center text-center cursor-pointer mb-4`}

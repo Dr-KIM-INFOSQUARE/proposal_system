@@ -4,11 +4,12 @@ import { Header } from './components/Header';
 import { ProjectList } from './components/ProjectList';
 import { DocumentTree } from './components/DocumentTree';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { BillingView } from './components/BillingView';
 import { api } from './services/api';
 import type { DocumentNode } from './types';
 
 function App() {
-  const [activeView, setActiveView] = useState<'analysis' | 'projects'>('analysis');
+  const [activeView, setActiveView] = useState<'analysis' | 'projects' | 'billing'>('analysis');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
@@ -17,6 +18,7 @@ function App() {
   const [fileSize, setFileSize] = useState<string | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [projectList, setProjectList] = useState<any[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("models/gemini-3-flash-preview");
 
 
   useEffect(() => {
@@ -39,7 +41,7 @@ function App() {
   const handleUpload = async (file: File) => {
     try {
       setIsUploading(true);
-      const res = await api.uploadDocument(file);
+      const res = await api.uploadDocument(file, selectedModel);
       setCurrentDocumentId(res.document_id);
       setTreeData(res.tree || []);
       setFileName(file.name);
@@ -103,6 +105,20 @@ function App() {
     }
   };
 
+  const handleReanalyze = async () => {
+    if (!currentDocumentId) return;
+    try {
+      setIsUploading(true);
+      const res = await api.reanalyzeProject(currentDocumentId, selectedModel);
+      setTreeData(res.tree || []);
+      alert("지정한 모델로 재분석을 완료했습니다.");
+    } catch (err) {
+      alert("재분석 중 오류가 발생했습니다: " + err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleDeleteProject = async (documentId: string) => {
     if (!confirm("정말 이 프로젝트를 삭제하시겠습니까?")) return;
     try {
@@ -127,8 +143,10 @@ function App() {
         onViewChange={setActiveView} 
         onUpload={handleUpload}
         isUploading={isUploading}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
       />
-      <main className="flex-1 lg:ml-80 w-full min-w-0 bg-surface flex flex-col min-h-screen transition-all duration-300">
+      <main className="flex-1 lg:ml-96 w-full min-w-0 bg-surface flex flex-col min-h-screen transition-all duration-300">
         <Header onToggleSidebar={toggleSidebar} />
         {activeView === 'analysis' ? (
           <div className="block flex-1 flex-col relative">
@@ -139,9 +157,11 @@ function App() {
                 pdfUrl={pdfUrl}
                 onSave={handleSave} 
                 onExport={handleExport} 
+                onReanalyze={handleReanalyze}
+                isAnalyzing={isUploading}
             />
           </div>
-        ) : (
+        ) : activeView === 'projects' ? (
           <div className="block flex-1 flex-col">
              <ProjectList 
                 onNewProject={() => setActiveView('analysis')} 
@@ -149,6 +169,10 @@ function App() {
                 onDeleteProject={handleDeleteProject}
                 projects={projectList}
              />
+          </div>
+        ) : (
+          <div className="block flex-1 flex-col">
+             <BillingView />
           </div>
         )}
       </main>
