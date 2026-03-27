@@ -450,7 +450,13 @@ export const BillingView: React.FC = () => {
                           axisLine={false} 
                           tickLine={false} 
                           tick={{ fill: '#8C9199', fontSize: 10, fontWeight: 600 }}
-                          tickFormatter={(val) => currency === 'KRW' ? `₩${(val/1000).toFixed(0)}k` : `$${val.toFixed(2)}`}
+                          tickFormatter={(val) => {
+                             if (currency === 'KRW') {
+                                if (val >= 1000) return `₩${(val / 1000).toFixed(1)}k`;
+                                return `₩${Math.round(val).toLocaleString()}`;
+                             }
+                             return `$${val.toFixed(2)}`;
+                          }}
                        />
                        {/* 분석 횟수 Y축 (우측) */}
                        <YAxis 
