@@ -90,5 +90,24 @@ export const api = {
         throw new Error(`Failed to load usage data: ${response.statusText}`);
     }
     return response.json();
+  },
+  
+  renameProject: async (documentId: string, newFilename: string) => {
+    const response = await fetch(`${API_BASE_URL}/projects/rename`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        new_filename: newFilename,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `Rename failed: ${response.statusText}`);
+    }
+    return response.json();
   }
 };

@@ -2,9 +2,10 @@ import React from 'react';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
+  onReset?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
+export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onReset }) => {
   return (
     <header className="w-full h-16 sticky top-0 z-30 bg-[#ffffff]/90 backdrop-blur-md dark:bg-slate-950/90 flex justify-between items-center px-4 md:px-8 border-b border-slate-100 dark:border-slate-800 shadow-sm">
       <div className="flex items-center gap-3 md:gap-4 flex-1">
@@ -17,6 +18,15 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         </div>
       </div>
       <div className="flex items-center gap-2 md:gap-6 shrink-0">
+        {onReset && (
+          <button 
+            onClick={onReset}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs md:text-sm font-semibold text-outline hover:text-primary hover:bg-primary/10 rounded-full transition-all border border-outline-variant/30 hover:border-primary/30"
+          >
+            <span className="material-symbols-outlined text-lg md:text-xl">restart_alt</span>
+            <span className="hidden sm:inline">초기화</span>
+          </button>
+        )}
         <div className="flex items-center gap-1 md:gap-3">
           <button className="p-2 text-slate-500 hover:text-blue-500 transition-all rounded-full hover:bg-surface-container-low">
             <span className="material-symbols-outlined text-xl">notifications</span>

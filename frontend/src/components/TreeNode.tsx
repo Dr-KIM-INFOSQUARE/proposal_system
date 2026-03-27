@@ -39,7 +39,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
         />
         <div 
           onClick={() => setIsExpanded(!isExpanded)}
-          className={`flex-1 flex items-center justify-between gap-3 bg-surface-container-low px-3 md:px-4 py-2.5 md:py-3 rounded-lg hover:bg-surface-container-high transition-all cursor-pointer border-l-4 ${level === 0 ? 'border-primary' : 'border-transparent hover:border-primary/50'} ${contentHover ? 'bg-surface-container-high border-primary/50' : ''} ${isExpanded ? 'bg-surface-container-high ring-1 ring-primary/20' : ''}`}
+          className={`flex-1 flex items-center justify-between gap-3 bg-white px-3 md:px-4 py-2.5 md:py-3 rounded-lg hover:bg-primary/5 transition-all cursor-pointer border-l-4 ${level === 0 ? 'border-primary shadow-sm' : 'border-outline-variant/30 hover:border-primary/50'} ${contentHover ? 'bg-primary/5 border-primary/50' : ''} ${isExpanded ? 'bg-primary-fixed/10 ring-1 ring-primary/20' : 'border border-outline-variant/10'}`}
         >
           <div className="flex items-center gap-3">
             <span className={`${level === 0 ? 'font-bold text-sm md:text-base' : 'text-xs md:text-sm font-semibold'} text-on-surface`}>
@@ -107,7 +107,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
               value={node.userInstruction || ''}
               onChange={(e) => onUpdateProperty(node.id, 'userInstruction', e.target.value)}
               placeholder="사업의 핵심 아이디어나 이 항목에 꼭 들어가야 할 내용을 입력하세요."
-              className="w-full h-24 p-3 text-xs sm:text-sm bg-surface-container border border-outline-variant/30 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+              className="w-full h-24 p-3 text-xs sm:text-sm bg-white border border-outline-variant/30 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none shadow-sm"
             />
           </div>
         </div>

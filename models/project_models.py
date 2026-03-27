@@ -6,3 +6,6 @@ class ProjectSaveRequest(BaseModel):
     filename: str = "Unknown Document"
     selected_node_ids: List[Union[str, int, Any]]
     content_node_ids: List[Union[str, int, Any]] = []
+class ProjectRenameRequest(BaseModel):
+    document_id: str
+    new_filename: str

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { TreeNode } from './TreeNode';
 import type { DocumentNode } from '../types';
 import { toggleNode, toggleContentNode, updateNodeProperty } from '../utils/treeLogic';
@@ -12,10 +12,17 @@ interface DocumentTreeProps {
   onExport: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
   onReanalyze?: () => void;
   isAnalyzing?: boolean;
+  hideHeader?: boolean;
+  hideFooter?: boolean;
+  onStepComplete?: () => void;
 }
 
 
-export const DocumentTree: React.FC<DocumentTreeProps> = ({ 
+export interface DocumentTreeRef {
+  getSelectedIds: () => { selectedIds: (string | number)[], contentIds: (string | number)[] };
+}
+
+export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
     initialTreeData, 
     fileName, 
     fileSize, 
@@ -23,10 +30,18 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
     onSave, 
     onExport,
     onReanalyze,
-    isAnalyzing
-}) => {
+    isAnalyzing,
+    hideHeader = false,
+    hideFooter = false,
+    onStepComplete
+}, ref) => {
   const [treeData, setTreeData] = useState<DocumentNode[]>(initialTreeData);
   const [isPreviewVisible, setIsPreviewVisible] = useState(true);
+
+  // Expose getSelectedIds to parent
+  useImperativeHandle(ref, () => ({
+    getSelectedIds
+  }));
 
 
   useEffect(() => {
@@ -46,7 +61,12 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
         };
       });
     };
-    setTreeData(initializeTree(initialTreeData));
+    
+    if (initialTreeData.length > 0) {
+       setTreeData(initializeTree(initialTreeData));
+       // 분석이 완료되었으므로 1단계 완료 처리
+       onStepComplete?.();
+    }
   }, [initialTreeData]);
 
   const handleToggleCheck = (id: string | number, checked: boolean) => {
@@ -107,9 +127,9 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
 
   if (!fileName || treeData.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-10 mt-32 h-full">
+      <div className="flex-1 flex flex-col items-center justify-center p-10 h-full min-h-[400px]">
         <div className="w-20 h-20 bg-surface-container-high rounded-full flex items-center justify-center mb-6 shadow-sm">
-          <span className="material-symbols-outlined text-4xl text-outline">description</span>
+          <span className="material-symbols-outlined text-4xl text-outline opacity-30">description</span>
         </div>
         <h2 className="text-xl font-headline font-bold text-on-surface mb-2">분석할 문서가 없습니다</h2>
         <p className="text-sm text-outline mb-6 text-center break-keep">파일이 아직 업로드되지 않았습니다.<br />좌측 사이드바에서 계획서를 업로드하세요.</p>
@@ -119,50 +139,52 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
 
   return (
     <>
-      <div className="p-4 sm:p-6 md:p-10 pb-48 lg:pb-32 flex-1">
-        <section className="bg-surface-container-lowest rounded-xl p-5 sm:p-6 md:p-8 mb-6 md:mb-10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10">
-            <div className="flex items-start md:items-center gap-4 md:gap-6 w-full xl:w-auto">
-                <div className="bg-primary-fixed/30 p-3 md:p-4 rounded-xl shrink-0">
-                    <span className="material-symbols-outlined text-primary text-2xl md:text-3xl">description</span>
-                </div>
-                <div className="min-w-0 w-full">
-                    <h2 className="font-headline text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-on-surface truncate w-full" title={fileName}>{fileName}</h2>
-                    <div className="flex flex-wrap gap-y-2 gap-x-4 md:gap-6 mt-2">
-                        <div className="flex items-center gap-1.5 text-outline">
-                            <span className="material-symbols-outlined text-[1rem]">data_usage</span>
-                            <span className="text-[0.65rem] sm:text-xs font-medium">크기: {fileSize}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-outline">
-                            <span className="material-symbols-outlined text-[1rem]">article</span>
-                            <span className="text-[0.65rem] sm:text-xs font-medium">형식: {fileName.split('.').pop()?.toUpperCase()}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div className="w-full xl:w-auto flex flex-row xl:flex-col items-center xl:items-end justify-between xl:justify-center border-t xl:border-t-0 pt-4 xl:pt-0 border-outline-variant/10">
-                <div className="flex flex-col items-center xl:items-end gap-2">
-                    <span className="text-[0.6875rem] font-label uppercase tracking-widest text-outline block mb-0 xl:mb-1">상태</span>
-                    <div className="flex items-center gap-2 text-primary font-bold text-sm md:text-base">
-                        <span className={`w-2 h-2 rounded-full bg-primary ${isAnalyzing ? 'animate-ping' : 'animate-pulse'}`}></span> 
-                        {isAnalyzing ? '분석 진행 중...' : '구조 분석 완료'}
-                    </div>
-                    {onReanalyze && (
-                        <button 
-                            onClick={onReanalyze}
-                            disabled={isAnalyzing}
-                            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-primary/30 text-primary text-[10px] md:text-xs font-bold rounded-lg hover:bg-primary/5 transition-all disabled:opacity-50 shadow-sm"
-                        >
-                            <span className="material-symbols-outlined text-sm">refresh</span>
-                            모델 다시 분석
-                        </button>
-                    )}
-                </div>
-            </div>
-        </section>
+      <div className={`p-4 sm:p-6 md:p-10 ${hideFooter ? 'pb-10' : 'pb-48 lg:pb-32'} flex-1`}>
+        {!hideHeader && (
+          <section className="bg-surface-container-lowest rounded-xl p-5 sm:p-6 md:p-8 mb-6 md:mb-10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10">
+              <div className="flex items-start md:items-center gap-4 md:gap-6 w-full xl:w-auto">
+                  <div className="bg-primary-fixed/30 p-3 md:p-4 rounded-xl shrink-0">
+                      <span className="material-symbols-outlined text-primary text-2xl md:text-3xl">description</span>
+                  </div>
+                  <div className="min-w-0 w-full">
+                      <h2 className="font-headline text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-on-surface truncate w-full" title={fileName}>{fileName}</h2>
+                      <div className="flex flex-wrap gap-y-2 gap-x-4 md:gap-6 mt-2">
+                          <div className="flex items-center gap-1.5 text-outline">
+                              <span className="material-symbols-outlined text-[1rem]">data_usage</span>
+                              <span className="text-[0.65rem] sm:text-xs font-medium">크기: {fileSize}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-outline">
+                              <span className="material-symbols-outlined text-[1rem]">article</span>
+                              <span className="text-[0.65rem] sm:text-xs font-medium">형식: {fileName.split('.').pop()?.toUpperCase()}</span>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+              <div className="w-full xl:w-auto flex flex-row xl:flex-col items-center xl:items-end justify-between xl:justify-center border-t xl:border-t-0 pt-4 xl:pt-0 border-outline-variant/10">
+                  <div className="flex flex-col items-center xl:items-end gap-2">
+                      <span className="text-[0.6875rem] font-label uppercase tracking-widest text-outline block mb-0 xl:mb-1">상태</span>
+                      <div className="flex items-center gap-2 text-primary font-bold text-sm md:text-base">
+                          <span className={`w-2 h-2 rounded-full bg-primary ${isAnalyzing ? 'animate-ping' : 'animate-pulse'}`}></span> 
+                          {isAnalyzing ? '분석 진행 중...' : '구조 분석 완료'}
+                      </div>
+                      {onReanalyze && (
+                          <button 
+                              onClick={onReanalyze}
+                              disabled={isAnalyzing}
+                              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-primary/30 text-primary text-[10px] md:text-xs font-bold rounded-lg hover:bg-primary/5 transition-all disabled:opacity-50 shadow-sm"
+                          >
+                              <span className="material-symbols-outlined text-sm">refresh</span>
+                              모델 다시 분석
+                          </button>
+                      )}
+                  </div>
+              </div>
+          </section>
+        )}
 
         <div className="flex flex-col xl:flex-row items-start gap-6 md:gap-10">
             {/* 왼쪽: 문서 구조 트리 */}
-            <section className="flex-1 w-full bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
+            <section className="flex-1 w-full bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 md:mb-8">
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-3">
@@ -198,13 +220,13 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
                 </div>
             </section>
  
-            {/* 오른쪽: PDF 미리보기 */}
-            {isPreviewVisible && (
-                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right sticky top-[74px] h-[calc(100vh-74px-128px)] min-h-[500px]">
+            {/* 오른쪽: PDF 미리보기/원본 보기 */}
+            {isPreviewVisible ? (
+                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-2xl border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right sticky top-2 h-[calc(100vh-40px)] min-h-[600px] z-50">
                     <div className="flex items-center justify-between px-5 py-3 bg-surface-container-high/50 border-b border-outline-variant/10">
                         <div className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-primary text-sm">visibility</span>
-                            <span className="text-xs font-bold uppercase tracking-widest text-outline">원본 문서 미리보기</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-outline">원본 보기</span>
                         </div>
                         <div className="flex items-center gap-4">
                             {pdfUrl && (
@@ -240,28 +262,40 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
                         )}
                     </div>
                 </section>
+            ) : (
+                /* 플로팅 원본 보기 버튼 (패널이 닫혀있을 때) */
+                <button 
+                   onClick={() => setIsPreviewVisible(true)}
+                   className="fixed right-6 top-1/2 -translate-y-1/2 w-14 h-14 bg-primary text-on-primary rounded-full shadow-lg hover:shadow-xl hover:scale-110 active:scale-95 transition-all duration-300 flex flex-col items-center justify-center gap-0.5 z-[60] group border border-white/20"
+                   title="원본 보기 열기"
+                >
+                   <span className="material-symbols-outlined text-2xl group-hover:animate-bounce mt-1">visibility</span>
+                   <span className="text-[10px] font-bold leading-tight uppercase">원본 보기</span>
+                </button>
             )}
         </div>
 
       </div>
 
 
-      <footer className="fixed bottom-0 left-0 lg:left-96 w-full lg:w-[calc(100%-24rem)] bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 p-4 md:p-6 z-40 transition-all duration-300">
-          <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center justify-center sm:justify-start w-full sm:w-auto gap-2 sm:gap-4 text-outline text-xs sm:text-sm">
-                  <span className="material-symbols-outlined text-primary text-lg sm:text-xl">verified_user</span> 
-                  <span>선택됨: <strong className="text-on-surface">{checkedCount}개 항목</strong> 추출 준비</span>
-              </div>
-              <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 md:gap-4 w-full sm:w-auto">
-                  <button onClick={() => onExport(getSelectedIds().selectedIds, getSelectedIds().contentIds)} className="w-full sm:w-auto px-4 md:px-6 py-2.5 md:py-3 text-xs md:text-sm bg-gradient-to-r from-emerald-500 to-teal-500 shadow-teal-500/20 text-white font-bold rounded-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm">
-                      <span className="material-symbols-outlined text-base md:text-lg">file_download</span> JSON 내보내기
-                  </button>
-                  <button onClick={handleSaveClick} className="w-full sm:w-auto px-4 md:px-8 py-2.5 md:py-3 text-xs md:text-sm bg-gradient-to-r from-primary to-primary-container text-white font-bold rounded-lg shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
-                      <span className="material-symbols-outlined text-base md:text-lg">save</span> 프로젝트 저장
-                  </button>
-              </div>
-          </div>
-      </footer>
+      {!hideFooter && (
+        <footer className="fixed bottom-0 left-0 lg:left-96 w-full lg:w-[calc(100%-24rem)] bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 p-4 md:p-6 z-40 transition-all duration-300">
+            <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center justify-center sm:justify-start w-full sm:w-auto gap-2 sm:gap-4 text-outline text-xs sm:text-sm">
+                    <span className="material-symbols-outlined text-primary text-lg sm:text-xl">verified_user</span> 
+                    <span>선택됨: <strong className="text-on-surface">{checkedCount}개 항목</strong> 추출 준비</span>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 md:gap-4 w-full sm:w-auto">
+                    <button onClick={() => onExport(getSelectedIds().selectedIds, getSelectedIds().contentIds)} className="w-full sm:w-auto px-4 md:px-6 py-2.5 md:py-3 text-xs md:text-sm bg-gradient-to-r from-emerald-500 to-teal-500 shadow-teal-500/20 text-white font-bold rounded-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm">
+                        <span className="material-symbols-outlined text-base md:text-lg">file_download</span> JSON 내보내기
+                    </button>
+                    <button onClick={handleSaveClick} className="w-full sm:w-auto px-4 md:px-8 py-2.5 md:py-3 text-xs md:text-sm bg-gradient-to-r from-primary to-primary-container text-white font-bold rounded-lg shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                        <span className="material-symbols-outlined text-base md:text-lg">save</span> 프로젝트 저장
+                    </button>
+                </div>
+            </div>
+        </footer>
+      )}
     </>
   );
-};
+});

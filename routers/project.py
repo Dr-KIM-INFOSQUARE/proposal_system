@@ -5,7 +5,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlalchemy.orm import Session
 from services.parser_service import parse_document
 from models.database import get_db, Project, UsageLog
-from models.project_models import ProjectSaveRequest
+from models.project_models import ProjectSaveRequest, ProjectRenameRequest
 from services.pdf_service import convert_hwpx_to_pdf
 
 
@@ -213,6 +213,16 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     
     db.commit()
     return {"status": "success", "message": "Project saved successfully"}
+@router.post("/projects/rename")
+async def rename_project(request: ProjectRenameRequest, db: Session = Depends(get_db)):
+    """프로젝트의 이름을 변경합니다."""
+    project = db.query(Project).filter(Project.document_id == request.document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    project.filename = request.new_filename
+    db.commit()
+    return {"status": "success", "message": "Project renamed successfully"}
 
 @router.get("/projects")
 async def list_projects(db: Session = Depends(get_db)):
@@ -251,8 +261,8 @@ async def export_project(document_id: str, db: Session = Depends(get_db)):
             project.parsed_tree = tree
             db.commit()
     
-    selected_set = set(project.selected_node_ids or [])
-    content_set = set(project.content_node_ids or [])
+    selected_set = {str(i) for i in (project.selected_node_ids or [])}
+    content_set = {str(i) for i in (project.content_node_ids or [])}
     
     # 선택된 노드 및 자식이 선택된 부모 구조를 유지하며 필터링
     def filter_tree(nodes):
@@ -264,17 +274,20 @@ async def export_project(document_id: str, db: Session = Depends(get_db)):
             if not isinstance(n, dict):
                 continue
                 
-            node_id = str(n.get("id", ""))
+            orig_id = n.get("id", "")
+            node_id = str(orig_id)
             if not node_id:
                 continue
                 
             children_filtered = filter_tree(n.get("children", []))
             
             # 선택된 노드이거나, 하위 노드 중 선택된 것이 있는 경우 포함
-            if node_id in selected_set or children_filtered:
+            is_selected = node_id in selected_set
+            
+            if is_selected or children_filtered:
                 # 키 누락 방지를 위해 .get() 사용 및 기본값 할당
                 new_node = {
-                    "id": node_id,
+                    "id": orig_id, # 원본 ID 타입 유지 (int/str)
                     "title": n.get("title", "제목 없음"),
                     "type": n.get("type", "heading"),
                     "content": node_id in content_set,

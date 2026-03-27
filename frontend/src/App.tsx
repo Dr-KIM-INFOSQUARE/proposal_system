@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ProjectList } from './components/ProjectList';
-import { DocumentTree } from './components/DocumentTree';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { AnalysisWorkflow } from './components/AnalysisWorkflow';
 import { BillingView } from './components/BillingView';
 import { api } from './services/api';
 import type { DocumentNode } from './types';
@@ -19,12 +19,11 @@ function App() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [projectList, setProjectList] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("models/gemini-3-flash-preview");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
 
   useEffect(() => {
-     if (activeView === 'projects') {
-         loadProjects();
-     }
+      loadProjects();
   }, [activeView]);
 
   const loadProjects = async () => {
@@ -38,18 +37,39 @@ function App() {
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
-  const handleUpload = async (file: File) => {
+  const handleFileSelect = (file: File) => {
+    setSelectedFile(file);
+    // 선택된 파일 정보를 UI에 즉시 반영하기 위해 임시로 이름만 설정
+    setFileName(file.name);
+    setFileSize((file.size / 1024 / 1024).toFixed(2) + 'MB');
+    // 기존 분석 데이터 초기화
+    setTreeData([]);
+    setCurrentDocumentId(null);
+    setPdfUrl(null);
+  };
+
+  const handleCancelSelection = () => {
+    setSelectedFile(null);
+    setFileName(null);
+    setFileSize(null);
+    setTreeData([]);
+    setCurrentDocumentId(null);
+    setPdfUrl(null);
+  };
+
+  const handleStartAnalysis = async () => {
+    if (!selectedFile) return;
+    
     try {
       setIsUploading(true);
-      const res = await api.uploadDocument(file, selectedModel);
+      const res = await api.uploadDocument(selectedFile, selectedModel);
       setCurrentDocumentId(res.document_id);
       setTreeData(res.tree || []);
-      setFileName(file.name);
-      setFileSize((file.size / 1024 / 1024).toFixed(2) + 'MB');
       setPdfUrl(res.pdf_url);
-      setActiveView('analysis');
+      setSelectedFile(null); // 분석 시작 후 선택 상태 초기화
+      loadProjects();
     } catch (err) {
-      alert("업로드 중 오류가 발생했습니다: " + err);
+      alert("분석 중 오류가 발생했습니다: " + err);
     } finally {
       setIsUploading(false);
     }
@@ -63,6 +83,7 @@ function App() {
      try {
        await api.saveProject(currentDocumentId, fileName || "Unknown Document", selectedNodeIds, contentNodeIds);
        alert("프로젝트 상태가 성공적으로 저장되었습니다!");
+       loadProjects();
      } catch (err) {
        alert("저장 중 오류: " + err);
      }
@@ -119,6 +140,31 @@ function App() {
     }
   };
 
+  const handleReset = () => {
+    if (confirm("현재 작업을 초기화하시겠습니까? 저장되지 않은 변경사항은 사라질 수 있습니다.")) {
+      setCurrentDocumentId(null);
+      setTreeData([]);
+      setFileName(null);
+      setFileSize(null);
+      setPdfUrl(null);
+      setSelectedFile(null);
+      setIsUploading(false);
+      setActiveView('analysis');
+    }
+  };
+
+  const handleRename = async (documentId: string, newTitle: string) => {
+    try {
+      await api.renameProject(documentId, newTitle);
+      loadProjects(); // 목록 갱신
+      if (currentDocumentId === documentId) {
+          setFileName(newTitle);
+      }
+    } catch (err) {
+      console.error("Failed to rename project", err);
+    }
+  };
+
   const handleDeleteProject = async (documentId: string) => {
     if (!confirm("정말 이 프로젝트를 삭제하시겠습니까?")) return;
     try {
@@ -141,16 +187,17 @@ function App() {
         activeView={activeView} 
         onToggle={toggleSidebar} 
         onViewChange={setActiveView} 
-        onUpload={handleUpload}
         isUploading={isUploading}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
+        projects={projectList}
+        onOpenProject={handleOpenProject}
       />
       <main className="flex-1 lg:ml-96 w-full min-w-0 bg-surface flex flex-col min-h-screen transition-all duration-300">
-        <Header onToggleSidebar={toggleSidebar} />
+        <Header onToggleSidebar={toggleSidebar} onReset={handleReset} />
         {activeView === 'analysis' ? (
           <div className="block flex-1 flex-col relative">
-            <DocumentTree 
+            <AnalysisWorkflow 
                 initialTreeData={treeData} 
                 fileName={fileName}
                 fileSize={fileSize}
@@ -159,6 +206,16 @@ function App() {
                 onExport={handleExport} 
                 onReanalyze={handleReanalyze}
                 isAnalyzing={isUploading}
+                onFileSelect={handleFileSelect}
+                onStartAnalysis={handleStartAnalysis}
+                onCancelSelection={handleCancelSelection}
+                onTitleChange={(newTitle) => {
+                    setFileName(newTitle);
+                    if (currentDocumentId) {
+                        handleRename(currentDocumentId, newTitle);
+                    }
+                }}
+                hasSelectedFile={!!selectedFile}
             />
           </div>
         ) : activeView === 'projects' ? (
@@ -167,6 +224,7 @@ function App() {
                 onNewProject={() => setActiveView('analysis')} 
                 onOpenProject={handleOpenProject} 
                 onDeleteProject={handleDeleteProject}
+                onRename={handleRename}
                 projects={projectList}
              />
           </div>
