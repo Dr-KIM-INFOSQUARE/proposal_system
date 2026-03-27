@@ -160,9 +160,9 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
             </div>
         </section>
 
-        <div className="flex flex-col xl:flex-row items-stretch gap-6 md:gap-10">
+        <div className="flex flex-col xl:flex-row items-start gap-6 md:gap-10">
             {/* 왼쪽: 문서 구조 트리 */}
-            <section className="flex-1 bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
+            <section className="flex-1 w-full bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-[0_12px_32px_-4px_rgba(25,28,30,0.06)] border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 md:mb-8">
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-3">
@@ -183,8 +183,8 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
                         <button onClick={() => handleSelectAll(true)} className="px-3 md:px-4 py-1.5 md:py-2 text-[0.65rem] md:text-xs font-bold text-primary hover:bg-primary-fixed/30 transition-all rounded-lg uppercase tracking-wider bg-primary-fixed/10">전체 선택</button>
                     </div>
                 </div>
-
-                <div className="space-y-4 overflow-y-auto">
+ 
+                <div className="space-y-4">
                    {treeData.map(node => (
                      <TreeNode 
                         key={node.id} 
@@ -197,10 +197,10 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
                    ))}
                 </div>
             </section>
-
+ 
             {/* 오른쪽: PDF 미리보기 */}
             {isPreviewVisible && (
-                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right">
+                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right sticky top-[74px] h-[calc(100vh-74px-128px)] min-h-[500px]">
                     <div className="flex items-center justify-between px-5 py-3 bg-surface-container-high/50 border-b border-outline-variant/10">
                         <div className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-primary text-sm">visibility</span>
@@ -225,7 +225,7 @@ export const DocumentTree: React.FC<DocumentTreeProps> = ({
                             </button>
                         </div>
                     </div>
-                    <div className="flex-1 bg-surface-container-lowest relative min-h-[600px] xl:min-h-0">
+                    <div className="flex-1 bg-surface-container-lowest relative">
                         {pdfUrl ? (
                             <iframe 
                                 src={`http://127.0.0.1:8000${pdfUrl}#toolbar=0`} 
