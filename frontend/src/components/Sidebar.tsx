@@ -103,7 +103,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     <span className="material-symbols-outlined text-outline group-hover:text-primary transition-colors text-lg">
                                         {getFileIcon(project.filename)}
                                     </span>
-                                    <span className="text-xs font-medium text-on-surface truncate">{project.filename}</span>
+                                    <span className="text-xs font-medium text-on-surface truncate">{project.name || project.filename}</span>
                                 </div>
                                 <span className="material-symbols-outlined text-outline text-sm">chevron_right</span>
                             </li>

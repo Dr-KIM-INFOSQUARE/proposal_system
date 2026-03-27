@@ -88,10 +88,10 @@ export const ProjectList: React.FC<ProjectListProps> = ({
                               className="truncate cursor-pointer hover:text-primary transition-colors"
                               onClick={() => onOpenProject(p.document_id)}
                             >
-                              {p.filename}
+                              {p.name || p.filename}
                             </span>
                             <button 
-                              onClick={() => startEditing(p.document_id, p.filename)}
+                              onClick={() => startEditing(p.document_id, p.name || p.filename)}
                               className="material-symbols-outlined text-[16px] text-outline opacity-0 group-hover/name:opacity-100 hover:text-primary transition-all"
                             >
                               edit

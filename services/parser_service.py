@@ -156,3 +156,34 @@ def parse_document(filepath: str, model_id: str = "models/gemini-3-flash-preview
             ],
             "usage": usage_empty
         }
+
+async def parse_document_stream(filepath: str, model_id: str = "models/gemini-3-flash-preview"):
+    """확장자에 따라 스트리밍 방식으로 상태를 보고하며 파싱을 수행합니다."""
+    ext = filepath.lower().split('.')[-1]
+    
+    if ext == "hwpx" or ext == "pdf":
+        from services.hwpx_extractor import extract_hwpx_to_markdown
+        from services.gemini_service import analyze_structure_stream
+        
+        yield {"status": "extracting", "message": "문서에서 텍스트와 표 구조를 추출하는 중..."}
+        raw_markdown = extract_hwpx_to_markdown(filepath)
+        
+        if not raw_markdown:
+            yield {"status": "error", "message": "문서 텍스트 추출에 실패했습니다."}
+            return
+            
+        yield {"status": "extracting_done", "message": "텍스트 추출 완료. Gemini AI 분석 단계로 넘어갑니다."}
+        
+        async for event in analyze_structure_stream(raw_markdown, model_id=model_id):
+            yield event
+            
+    elif ext == "docx":
+        yield {"status": "extracting", "message": "DOCX 로컬 분석 중..."}
+        nodes = parse_docx(filepath)
+        yield {
+            "status": "completed", 
+            "message": "분석 완료", 
+            "data": {"nodes": nodes, "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}
+        }
+    else:
+        yield {"status": "error", "message": f"지원하지 않는 포맷입니다. ({ext})"}

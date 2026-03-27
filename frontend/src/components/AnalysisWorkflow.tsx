@@ -17,6 +17,7 @@ interface AnalysisWorkflowProps {
   onCancelSelection: () => void;
   onTitleChange: (title: string) => void;
   hasSelectedFile: boolean;
+  uploadMessage?: string | null;
 }
 
 export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
@@ -24,13 +25,18 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const treeRef = useRef<DocumentTreeRef>(null);
   
-  // 트리가 비어있으면(초기화/취소) 진행 상태도 초기화
+  // 트리가 입수되면 1단계를 자동으로 완료 처리하고 다음 단계로 넘어감
   useEffect(() => {
-    if (props.initialTreeData.length === 0) {
+    if (props.initialTreeData.length > 0) {
+      if (!completedSteps.includes(1)) {
+        setCompletedSteps([1]);
+        setActiveStep(1); // 분석 완료 시 1단계 '문서 구조 분석'을 열려있는 상태로 유지
+      }
+    } else {
       setCompletedSteps([]);
       setActiveStep(0); // 모든 단계를 닫힘 상태로 초기화
     }
-  }, [props.initialTreeData]);
+  }, [props.initialTreeData]); // 전체 데이터 변화 감지
 
   const toggleStep = (step: number) => {
     setActiveStep(activeStep === step ? 0 : step);
@@ -97,19 +103,26 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-1 group/title">
-                <input 
-                    type="text"
-                    value={props.fileName || ''}
-                    onChange={(e) => props.onTitleChange(e.target.value)}
-                    placeholder={props.isAnalyzing ? "분석 중..." : "분석 대기 중..."}
-                    className="flex-1 bg-transparent text-xl md:text-2xl font-headline font-black text-on-surface border-none focus:ring-2 focus:ring-primary/20 rounded-lg py-1 px-2 -ml-2 transition-all outline-none placeholder:text-outline/30 placeholder:italic"
-                    disabled={props.isAnalyzing}
-                />
-                {!props.isAnalyzing && (
+                {props.isAnalyzing ? (
+                    <div className="flex items-center gap-3 overflow-hidden">
+                        <span className="text-xl md:text-2xl font-headline font-black text-primary animate-pulse whitespace-nowrap">
+                            {props.uploadMessage || "Gemini 분석 중..."}
+                        </span>
+                    </div>
+                ) : (
+                    <input 
+                        type="text"
+                        value={props.fileName || ''}
+                        onChange={(e) => props.onTitleChange(e.target.value)}
+                        placeholder="분석 대기 중..."
+                        className="flex-1 bg-transparent text-xl md:text-2xl font-headline font-black text-on-surface border-none focus:ring-2 focus:ring-primary/20 rounded-lg py-1 px-2 -ml-2 transition-all outline-none placeholder:text-outline/30 placeholder:italic"
+                    />
+                )}
+                {!props.isAnalyzing && props.fileName && (
                     <span className="material-symbols-outlined text-outline opacity-0 group-hover/title:opacity-100 transition-opacity text-sm">edit</span>
                 )}
                 {props.isAnalyzing && (
-                    <span className="px-2.5 py-1 bg-primary/10 text-primary text-[10px] font-black rounded-full uppercase tracking-tighter border border-primary/20 animate-pulse">Analyzing</span>
+                    <span className="px-2.5 py-1 bg-primary/20 text-primary text-[10px] font-black rounded-full uppercase tracking-tighter border border-primary/30 animate-bounce">AI Working</span>
                 )}
             </div>
             <div className="flex items-center gap-3">

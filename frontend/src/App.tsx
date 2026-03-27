@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ProjectList } from './components/ProjectList';
-import { LoadingOverlay } from './components/LoadingOverlay';
 import { AnalysisWorkflow } from './components/AnalysisWorkflow';
 import { BillingView } from './components/BillingView';
 import { api } from './services/api';
@@ -14,12 +13,14 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [treeData, setTreeData] = useState<DocumentNode[]>([]);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [fileSize, setFileSize] = useState<string | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [projectList, setProjectList] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("models/gemini-3-flash-preview");
+  const [fileName, setFileName] = useState<string | null>(null); // UI에 표시될 프로젝트 이름
+  const [originalFileName, setOriginalFileName] = useState<string | null>(null); // 원본 파일 이름
+  const [fileSize, setFileSize] = useState<string | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -41,6 +42,7 @@ function App() {
     setSelectedFile(file);
     // 선택된 파일 정보를 UI에 즉시 반영하기 위해 임시로 이름만 설정
     setFileName(file.name);
+    setOriginalFileName(file.name);
     setFileSize((file.size / 1024 / 1024).toFixed(2) + 'MB');
     // 기존 분석 데이터 초기화
     setTreeData([]);
@@ -51,6 +53,7 @@ function App() {
   const handleCancelSelection = () => {
     setSelectedFile(null);
     setFileName(null);
+    setOriginalFileName(null);
     setFileSize(null);
     setTreeData([]);
     setCurrentDocumentId(null);
@@ -62,16 +65,27 @@ function App() {
     
     try {
       setIsUploading(true);
-      const res = await api.uploadDocument(selectedFile, selectedModel);
-      setCurrentDocumentId(res.document_id);
-      setTreeData(res.tree || []);
-      setPdfUrl(res.pdf_url);
-      setSelectedFile(null); // 분석 시작 후 선택 상태 초기화
+      setUploadMessage("준비 중...");
+      
+      const res = await api.uploadDocumentStream(selectedFile, selectedModel, (msg) => {
+        setUploadMessage(msg);
+      });
+      
+      if (res) {
+        setCurrentDocumentId(res.document_id);
+        setTreeData(res.tree || []);
+        setPdfUrl(res.pdf_url);
+        // 프로젝트 이름 및 원본 파일 이름 설정
+        setFileName(selectedFile.name);
+        setOriginalFileName(selectedFile.name);
+      }
+      setSelectedFile(null);
       loadProjects();
     } catch (err) {
       alert("분석 중 오류가 발생했습니다: " + err);
     } finally {
       setIsUploading(false);
+      setUploadMessage(null);
     }
   };
 
@@ -80,13 +94,19 @@ function App() {
          alert("먼저 문서를 업로드해야 합니다.");
          return;
      }
-     try {
-       await api.saveProject(currentDocumentId, fileName || "Unknown Document", selectedNodeIds, contentNodeIds);
-       alert("프로젝트 상태가 성공적으로 저장되었습니다!");
-       loadProjects();
-     } catch (err) {
-       alert("저장 중 오류: " + err);
-     }
+      try {
+        await api.saveProject(
+          currentDocumentId, 
+          fileName || "Untitled Project", 
+          originalFileName || "Unknown Document",
+          selectedNodeIds, 
+          contentNodeIds
+        );
+        alert("프로젝트 상태가 성공적으로 저장되었습니다!");
+        loadProjects();
+      } catch (err) {
+        alert("저장 중 오류: " + err);
+      }
   };
 
   const handleExport = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[]) => {
@@ -94,11 +114,17 @@ function App() {
          alert("문서가 없습니다.");
          return;
      }
-     try {
-        // 자동 저장 실행
-        await api.saveProject(currentDocumentId, fileName || "Unknown Document", selectedNodeIds, contentNodeIds);
-
-        const res = await api.exportProject(currentDocumentId);
+      try {
+         // 자동 저장 실행
+         await api.saveProject(
+           currentDocumentId, 
+           fileName || "Untitled Project", 
+           originalFileName || "Unknown Document",
+           selectedNodeIds, 
+           contentNodeIds
+         );
+ 
+         const res = await api.exportProject(currentDocumentId);
         const blob = new Blob([JSON.stringify(res, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -117,7 +143,8 @@ function App() {
       const res = await api.loadProject(documentId);
       setCurrentDocumentId(res.document_id);
       setTreeData(res.tree || []);
-      setFileName(res.filename);
+      setFileName(res.name || res.filename);
+      setOriginalFileName(res.filename);
       setFileSize("저장됨");
       setPdfUrl(res.pdf_url);
       setActiveView('analysis');
@@ -130,13 +157,20 @@ function App() {
     if (!currentDocumentId) return;
     try {
       setIsUploading(true);
-      const res = await api.reanalyzeProject(currentDocumentId, selectedModel);
-      setTreeData(res.tree || []);
-      alert("지정한 모델로 재분석을 완료했습니다.");
+      setUploadMessage("재분석 준비 중...");
+      const res = await api.reanalyzeProjectStream(currentDocumentId, selectedModel, (msg) => {
+        setUploadMessage(msg);
+      });
+      if (res && res.tree) {
+        setTreeData(res.tree);
+        // 트리가 갱신되었으므로 완료 목록 갱신 등은 필요 없을 수도 있음 (이미 로드된 상태)
+        alert("지정한 모델로 재분석을 완료했습니다.");
+      }
     } catch (err) {
       alert("재분석 중 오류가 발생했습니다: " + err);
     } finally {
       setIsUploading(false);
+      setUploadMessage(null);
     }
   };
 
@@ -145,6 +179,7 @@ function App() {
       setCurrentDocumentId(null);
       setTreeData([]);
       setFileName(null);
+      setOriginalFileName(null);
       setFileSize(null);
       setPdfUrl(null);
       setSelectedFile(null);
@@ -206,11 +241,13 @@ function App() {
                 onExport={handleExport} 
                 onReanalyze={handleReanalyze}
                 isAnalyzing={isUploading}
+                uploadMessage={uploadMessage}
                 onFileSelect={handleFileSelect}
                 onStartAnalysis={handleStartAnalysis}
                 onCancelSelection={handleCancelSelection}
                 onTitleChange={(newTitle) => {
                     setFileName(newTitle);
+                    // 타이핑 할 때마다 실시간으로 프로젝트 메뉴에도 반영되길 원한다면 handleRename 호출
                     if (currentDocumentId) {
                         handleRename(currentDocumentId, newTitle);
                     }
@@ -234,7 +271,6 @@ function App() {
           </div>
         )}
       </main>
-      <LoadingOverlay isVisible={isUploading} />
     </div>
   );
 }

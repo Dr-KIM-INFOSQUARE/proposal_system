@@ -1,12 +1,15 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from services.parser_service import parse_document
+from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
 from models.project_models import ProjectSaveRequest, ProjectRenameRequest
 from services.pdf_service import convert_hwpx_to_pdf
+import json
+import asyncio
 
 
 router = APIRouter(prefix="/api", tags=["Projects"])
@@ -112,6 +115,110 @@ async def upload_document(
         # 에러 메시지를 프론트엔드로 전달
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/upload-stream")
+async def upload_document_stream(
+    file: UploadFile = File(...),
+    model_id: str = Form("gemini-3-flash-preview"),
+    db: Session = Depends(get_db)
+):
+    """실시간 진행 상태를 보고하며 문서를 업로드하고 분석합니다."""
+    document_id = str(uuid.uuid4())
+    filename = file.filename
+    # 디렉토리 생성 및 파일 저장
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    filepath = os.path.join(UPLOAD_DIR, f"{document_id}_{filename}")
+    
+    with open(filepath, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    async def event_generator():
+        try:
+            # 1. 문서 접수 보고
+            yield f"data: {json.dumps({'status': 'received', 'message': '파일이 성공적으로 업로드되었습니다.', 'document_id': document_id})}\n\n"
+            await asyncio.sleep(0.5) # 체감을 위한 아주 짧은 지연
+            
+            # 2. PDF 변환 (별도 미리보기용)
+            yield f"data: {json.dumps({'status': 'preparing', 'message': '문서 미리보기를 준비하는 중 (PDF 변환)...'})}\n\n"
+            pdf_filename = f"{document_id}.pdf"
+            pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
+            convert_hwpx_to_pdf(filepath, pdf_path)
+            
+            # 3. AI 분석 스트리밍 시작
+            final_data = None
+            async for event in parse_document_stream(filepath, model_id=model_id):
+                # 이벤트 데이터 전송
+                yield f"data: {json.dumps(event)}\n\n"
+                if event["status"] == "completed":
+                    final_data = event["data"]
+            
+            if final_data:
+                # DB 저장 및 후처리
+                project = Project(
+                    document_id=document_id,
+                    name=filename, # 최초 생성 시 이름은 파일명과 동일하게 설정
+                    filename=filename,
+                    parsed_tree=final_data["nodes"]
+                )
+                db.add(project)
+                
+                # 사용량 로깅
+                log_usage(document_id, model_id, final_data.get("usage", {}), db)
+                db.commit()
+                
+                # 최종 완료 시그널 (클라이언트에서 상태 마무리를 위해 사용)
+                yield f"data: {json.dumps({'status': 'final', 'document_id': document_id, 'name': filename, 'pdf_url': f'/uploads/{pdf_filename}', 'tree': final_data['nodes']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'AI 분석 결과가 올바르지 않습니다.'})}\n\n"
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/projects/{document_id}/reanalyze-stream")
+async def reanalyze_project_stream(
+    document_id: str,
+    model_id: str = Form("gemini-3-flash-preview"),
+    db: Session = Depends(get_db)
+):
+    """지정된 모델로 재분석을 수행하며 실시간 상태를 보고합니다."""
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 원본 파일 경로 찾기
+    filename = project.filename
+    # 저장된 파일 검색 (document_id로 시작하는 파일)
+    candidates = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(document_id) and not f.endswith(".pdf")]
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Original document file not found")
+    filepath = os.path.join(UPLOAD_DIR, candidates[0])
+
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'status': 'preparing', 'message': '재분석을 위해 문서를 불러오는 중...'})}\n\n"
+            
+            final_data = None
+            async for event in parse_document_stream(filepath, model_id=model_id):
+                yield f"data: {json.dumps(event)}\n\n"
+                if event["status"] == "completed":
+                    final_data = event["data"]
+            
+            if final_data:
+                # DB 업데이트
+                project.parsed_tree = final_data["nodes"]
+                # 사용량 로깅
+                log_usage(document_id, model_id, final_data.get("usage", {}), db)
+                db.commit()
+                
+                yield f"data: {json.dumps({'status': 'final', 'document_id': document_id, 'tree': final_data['nodes']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'message': '재분석 결과가 올바르지 않습니다.'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @router.get("/usage")
 async def get_usage_statistics(db: Session = Depends(get_db)):
     """API 사용량 및 비용 통계를 반환합니다."""
@@ -201,10 +308,14 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     if project:
         project.selected_node_ids = request.selected_node_ids
         project.content_node_ids = request.content_node_ids
-        project.filename = request.filename
+        # 사용자 정의 이름 반영 (있을 경우만)
+        if request.name:
+            project.name = request.name
+        # 원본 파일명은 웬만하면 덮어쓰지 않음
     else:
         project = Project(
             document_id=request.document_id,
+            name=request.name or request.filename,
             filename=request.filename,
             selected_node_ids=request.selected_node_ids,
             content_node_ids=request.content_node_ids
@@ -213,6 +324,7 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     
     db.commit()
     return {"status": "success", "message": "Project saved successfully"}
+
 @router.post("/projects/rename")
 async def rename_project(request: ProjectRenameRequest, db: Session = Depends(get_db)):
     """프로젝트의 이름을 변경합니다."""
@@ -220,7 +332,7 @@ async def rename_project(request: ProjectRenameRequest, db: Session = Depends(ge
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
-    project.filename = request.new_filename
+    project.name = request.new_name
     db.commit()
     return {"status": "success", "message": "Project renamed successfully"}
 
@@ -232,7 +344,8 @@ async def list_projects(db: Session = Depends(get_db)):
         {
             "id": str(p.id),
             "document_id": p.document_id,
-            "filename": p.filename,
+            "name": p.name or p.filename, # 프로젝트 별칭 우선
+            "filename": p.filename, # 원본 파일명
             "status": "분석 완료" if p.selected_node_ids else "분석 진행 중",
             "updatedAt": p.created_at.strftime("%Y-%m-%d")
         }
@@ -363,13 +476,18 @@ async def delete_project(document_id: str, db: Session = Depends(get_db)):
     db.delete(project)
     db.commit()
     
-    # 관련 파일도 삭제
-    _, ext = os.path.splitext(project.filename)
-    filepath = os.path.join(UPLOAD_DIR, f"{document_id}{ext}")
-    if os.path.exists(filepath):
-        try:
-            os.remove(filepath)
-        except Exception as e:
-            print(f"Failed to remove file {filepath}: {e}")
+    # 관련 실제 파일들도 모두 탐색하여 삭제 (원본, PDF, 임시 파일 등)
+    try:
+        if os.path.exists(UPLOAD_DIR):
+            for filename in os.listdir(UPLOAD_DIR):
+                if filename.startswith(document_id):
+                    filepath = os.path.join(UPLOAD_DIR, filename)
+                    try:
+                        os.remove(filepath)
+                        print(f"Removed project file: {filepath}")
+                    except Exception as fe:
+                        print(f"Failed to remove file {filepath}: {fe}")
+    except Exception as e:
+        print(f"Error while cleaning up project files: {e}")
             
     return {"status": "success", "message": "Project deleted successfully"}

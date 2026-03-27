@@ -17,7 +17,8 @@ class Project(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(String, unique=True, index=True)
-    filename = Column(String, default="Unknown Document")
+    name = Column(String, default="Untitled Project") # 사용자 정의 프로젝트 명
+    filename = Column(String, default="Unknown Document") # 원본 파일 명
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     selected_node_ids = Column(JSON, default=list)
     content_node_ids = Column(JSON, default=list)

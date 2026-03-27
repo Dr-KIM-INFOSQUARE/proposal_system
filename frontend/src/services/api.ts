@@ -30,7 +30,7 @@ export const api = {
     return response.json();
   },
   
-  saveProject: async (documentId: string, filename: string, selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[]) => {
+  saveProject: async (documentId: string, name: string, filename: string, selectedNodeIds: any[], contentNodeIds: any[]) => {
     const response = await fetch(`${API_BASE_URL}/projects/save`, {
       method: 'POST',
       headers: {
@@ -38,6 +38,7 @@ export const api = {
       },
       body: JSON.stringify({
         document_id: documentId,
+        name: name,
         filename: filename,
         selected_node_ids: selectedNodeIds,
         content_node_ids: contentNodeIds,
@@ -92,7 +93,7 @@ export const api = {
     return response.json();
   },
   
-  renameProject: async (documentId: string, newFilename: string) => {
+  renameProject: async (documentId: string, newName: string) => {
     const response = await fetch(`${API_BASE_URL}/projects/rename`, {
       method: 'POST',
       headers: {
@@ -100,7 +101,7 @@ export const api = {
       },
       body: JSON.stringify({
         document_id: documentId,
-        new_filename: newFilename,
+        new_name: newName,
       }),
     });
     
@@ -109,5 +110,106 @@ export const api = {
       throw new Error(errorData.detail || `Rename failed: ${response.statusText}`);
     }
     return response.json();
+  },
+
+  uploadDocumentStream: async (file: File, modelId: string, onProgress: (msg: string) => void) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('model_id', modelId);
+
+    const response = await fetch(`${API_BASE_URL}/upload-stream`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.status === 'error') {
+              onProgress(data.message || '오류 발생');
+              throw new Error(data.message || 'Unknown stream error');
+            }
+            if (data.message) onProgress(data.message);
+            if (data.status === 'final') result = data;
+          } catch (e) {
+            if (e instanceof Error && e.message === 'Unknown stream error' || (e as Error).message.includes('error')) {
+              throw e; // Reraise stream errors to exit while loop
+            }
+            console.error("Parse error in SSE stream", e);
+          }
+        }
+      }
+    }
+    return result;
+  },
+
+  reanalyzeProjectStream: async (documentId: string, modelId: string, onProgress: (msg: string) => void) => {
+    const formData = new FormData();
+    formData.append('model_id', modelId);
+
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/reanalyze-stream`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Re-analysis failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.status === 'error') {
+              onProgress(data.message || '오류 발생');
+              throw new Error(data.message || 'Unknown stream error');
+            }
+            if (data.message) onProgress(data.message);
+            if (data.status === 'final') result = data;
+          } catch (e) {
+            if (e instanceof Error && e.message === 'Unknown stream error' || (e as Error).message.includes('error')) {
+              throw e;
+            }
+            console.error("Parse error in re-analysis stream", e);
+          }
+        }
+      }
+    }
+    return result;
   }
 };

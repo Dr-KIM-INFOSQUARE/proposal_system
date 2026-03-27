@@ -2,6 +2,8 @@ import os
 import json
 import uuid
 import time
+import asyncio
+import traceback
 from typing import List, Optional, Any, Union
 from dotenv import load_dotenv
 from google import genai
@@ -35,21 +37,9 @@ class Node(BaseModel):
 
 Node.model_rebuild()
 
-def analyze_structure_with_gemini(text: str, model_id: str = "models/gemini-3-flash-preview") -> dict:
-    """
-    지정된 Gemini 모델을 사용하여 사업계획서 분석 및 사용량 정보를 반환합니다.
-    { "nodes": [...], "usage": { "input": 0, "output": 0 } }
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY missing in .env")
-
-    if not model_id.startswith("models/"):
-        model_id = f"models/{model_id}"
-
-    client = genai.Client(api_key=api_key)
-    
-    prompt = (
+def _get_analysis_prompt(text: str) -> str:
+    """사업계획서 분석을 위한 핵심 정밀 프롬프트를 반환합니다."""
+    return (
         "당신은 30년 경력의 전문적인 정부지원사업 사업계획서 분석가입니다. "
         "다음 텍스트에서 '사업계획서 양식'의 뼈대(계층 구조)를 완벽하게 추출하여 JSON 형식으로 반환하세요.\n\n"
         
@@ -86,24 +76,135 @@ def analyze_structure_with_gemini(text: str, model_id: str = "models/gemini-3-fl
         
         "6. **계층적 고유 ID**: 각 노드의 'id'는 논리적인 트리 계층 구조를 반영하여 생성하세요 (예: '1', '1-1', '1-1-1').\n\n"
         
+        "### ⚠️ 출력 형식 (엄격 준수):\n"
+        "반드시 최상위에 'nodes'라는 키를 가진 단일 JSON 객체로 반환하세요.\n"
+        "{\n"
+        "  \"nodes\": [ ... ]\n"
+        "}\n\n"
+        
         "텍스트 내용:\n" + text
     )
+
+def _reconstruct_tree_from_json(json_text: str) -> List[dict]:
+    """JSON 텍스트를 파싱하여 계층 구조 트리를 복구합니다."""
+    # 마크다운 코드 블록 제거 시도 (AI가 잘못된 형식을 줄 수 있음)
+    if json_text.strip().startswith("```"):
+        import re
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", json_text, re.DOTALL)
+        if match:
+            json_text = match.group(1)
+
+    try:
+        raw_data = json.loads(json_text)
+        data_list = []
+        if isinstance(raw_data, dict):
+            if "tree" in raw_data: data_list = raw_data["tree"]
+            elif "nodes" in raw_data: data_list = raw_data["nodes"]
+            else: data_list = [raw_data]
+        elif isinstance(raw_data, list):
+            data_list = raw_data
+
+        all_nodes_map = {}
+        root_nodes = []
+        
+        # 1차 통과: 모든 노드를 평면 맵에 저장
+        def collect_flat(items):
+            for item in items:
+                if isinstance(item, dict):
+                    # AI가 주지 않은 정보들에 대한 기본값 및 보정
+                    raw_id = item.get("id", str(uuid.uuid4()))
+                    item_id = str(raw_id).strip()
+                    
+                    title = str(item.get("title", "")).strip()
+                    # 제목이 공백인 경우, 가이드 문구에서 발췌하거나 ID 사용
+                    if not title:
+                        guide = item.get("writingGuide", "")
+                        if guide:
+                            title = guide[:20] + "..."
+                        else:
+                            title = f"제목 없는 섹션 ({item_id})"
+                    
+                    orig_children = item.get("children", [])
+                    
+                    # 맵에 기록 (children은 2차 pass에서 재구성)
+                    all_nodes_map[item_id] = {
+                        "id": item_id,
+                        "title": title,
+                        "type": item.get("type", "heading"),
+                        "writingGuide": item.get("writingGuide", ""),
+                        "tableMetadata": item.get("tableMetadata"),
+                        "children": []
+                    }
+                    if isinstance(orig_children, list) and orig_children:
+                        collect_flat(orig_children)
+        
+        collect_flat(data_list)
+        
+        if not all_nodes_map:
+             print("Warning: No nodes were collected in flat map.")
+             return []
+
+        # 2차 통과: ID 패턴(1-1-1 -> 1-1)을 분석하여 부모-자식 재구성
+        # 이미 부모-자식 관계 정보가 JSON에 nested 되어 있었다면 1차 수집 시 누락되지 않도록 주의
+        sorted_ids = sorted(all_nodes_map.keys(), key=lambda x: (len(str(x).split('-')), str(x)))
+        
+        processed_nested = set()
+        for node_id in sorted_ids:
+            # AI가 이미 nested하게 준 경우, collect_flat에서 children을 pop하지 않았으므로 
+            # 2차 pass에서 중복 처리가 될 수 있음. logic을 simple하게 유지.
+            node = all_nodes_map[node_id]
+            parts = node_id.split('-')
+            if len(parts) > 1:
+                parent_id = "-".join(parts[:-1])
+                if parent_id in all_nodes_map:
+                    if node not in all_nodes_map[parent_id]["children"]:
+                        all_nodes_map[parent_id]["children"].append(node)
+                    processed_nested.add(node_id)
+                else:
+                    root_nodes.append(node)
+            else:
+                root_nodes.append(node)
+        
+        # 3차 필터: nested된 노드를 최상위에서 제거
+        final_root_nodes = [n for n in root_nodes if n["id"] not in processed_nested]
+        
+        # Node 객체 검증 및 최종 변환
+        final_nodes = []
+        target_list = final_root_nodes if final_root_nodes else data_list
+        
+        for r in target_list:
+            if not isinstance(r, dict): continue
+            try:
+                node_obj = Node(**r)
+                final_nodes.append(node_obj.model_dump())
+            except Exception as e:
+                print(f"Node validation error: {e}")
+                final_nodes.append(r)
+        return final_nodes
+    except Exception as pe:
+        print(f"JSON Parsing Error: {pe}\nRaw text: {json_text[:200]}...")
+        raise pe
+
+def analyze_structure_with_gemini(text: str, model_id: str = "models/gemini-3-flash-preview") -> dict:
+    """지정된 Gemini 모델을 사용하여 사업계획서 분석 및 사용량 정보를 반환합니다."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY missing in .env")
+
+    if not model_id.startswith("models/"):
+        model_id = f"models/{model_id}"
+
+    client = genai.Client(api_key=api_key)
+    prompt = _get_analysis_prompt(text)
 
     try:
         response = client.models.generate_content(
             model=model_id,
             contents=prompt,
-            config={
-                'response_mime_type': 'application/json',
-            }
+            config={'response_mime_type': 'application/json'}
         )
         
-        # 사용량 데이터 추출
-        usage_info = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0
-        }
+        usage_info = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         if response.usage_metadata:
             usage_info["input_tokens"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
             usage_info["output_tokens"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
@@ -111,75 +212,78 @@ def analyze_structure_with_gemini(text: str, model_id: str = "models/gemini-3-fl
 
         nodes = []
         if response.text:
-            try:
-                raw_data = json.loads(response.text)
-                data_list = []
-                if isinstance(raw_data, dict):
-                    if "tree" in raw_data: data_list = raw_data["tree"]
-                    elif "nodes" in raw_data: data_list = raw_data["nodes"]
-                    else: data_list = [raw_data]
-                elif isinstance(raw_data, list):
-                    data_list = raw_data
-
-                # AI가 가끔 평면적으로(Flat) 나열하는 경우가 있으므로 계층 복구 로직 적용
-                all_nodes_map = {}
-                root_nodes = []
-                
-                # 1차 통과: 모든 노드를 평면 맵에 저장
-                def collect_flat(items):
-                    for item in items:
-                        if isinstance(item, dict) and "title" in item:
-                            if "id" not in item: item["id"] = str(uuid.uuid4())
-                            # children은 나중에 재구성할 것이므로 비워둠 (Deep Copy 방지)
-                            orig_children = item.pop("children", [])
-                            all_nodes_map[str(item["id"])] = {**item, "children": []}
-                            if orig_children: collect_flat(orig_children)
-                
-                collect_flat(data_list)
-                
-                # 2차 통과: ID 패턴(1.1 -> 1)을 분석하여 부모-자식 재구성
-                sorted_ids = sorted(all_nodes_map.keys(), key=lambda x: (len(x.split('-')), x))
-                
-                for node_id in sorted_ids:
-                    node = all_nodes_map[node_id]
-                    # 부모 ID 찾기 (1-1-1 -> 1-1)
-                    parts = node_id.split('-')
-                    if len(parts) > 1:
-                        parent_id = "-".join(parts[:-1])
-                        if parent_id in all_nodes_map:
-                            all_nodes_map[parent_id]["children"].append(node)
-                        else:
-                            root_nodes.append(node)
-                    else:
-                        root_nodes.append(node)
-                
-                # 최종적으로 중실제로 중복이 발생할 수 있으므로 최상위 것들만 반환
-                # 단, AI가 이미 계층적으로 줬을 경우를 위해 root_nodes가 비어있지 않은지 확인
-                if root_nodes:
-                    for r in root_nodes:
-                        try:
-                            node_obj = Node(**r)
-                            nodes.append(node_obj.model_dump())
-                        except Exception:
-                            nodes.append(r)
-                else:
-                    # 복구 실패 시 원본 시도
-                    for item in data_list:
-                        if isinstance(item, dict):
-                            try:
-                                node_obj = Node(**item)
-                                nodes.append(node_obj.model_dump())
-                            except Exception:
-                                nodes.append(item)
-            except Exception as pe:
-                print(f"JSON Parsing Error: {pe}")
-                raise pe
+            nodes = _reconstruct_tree_from_json(response.text)
         
-        return {
-            "nodes": nodes,
-            "usage": usage_info
-        }
-        
+        return {"nodes": nodes, "usage": usage_info}
     except Exception as e:
         print(f"Gemini API Error ({model_id}): {e}")
         raise e
+
+async def analyze_structure_stream(text: str, model_id: str = "models/gemini-3-flash-preview"):
+    """비동기 스트리밍 방식으로 Gemini 분석을 수행합니다."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        yield {"status": "error", "message": "GEMINI_API_KEY missing"}
+        return
+
+    if not model_id.startswith("models/"):
+        model_id = f"models/{model_id}"
+
+    client = genai.Client(api_key=api_key)
+    prompt = _get_analysis_prompt(text)
+
+    print(f"Starting Gemini analysis with model: {model_id}")
+    yield {"status": "start", "message": "Gemini AI가 문서 맥락을 파악하고 있습니다..."}
+
+    try:
+        print("Sending request to Gemini API (streaming)...")
+        response_stream = await client.aio.models.generate_content_stream(
+            model=model_id,
+            contents=prompt,
+            config={'response_mime_type': 'application/json'}
+        )
+        
+        full_text = ""
+        async for chunk in response_stream:
+            if chunk.text:
+                full_text += chunk.text
+                # 수신량에 따른 동적 메시지 생성 (진행률 안내 느낌)
+                recv_len = len(full_text)
+                if recv_len < 2000:
+                    msg = "AI가 문서의 전체적인 맥락을 파악하고 있습니다..."
+                elif recv_len < 8000:
+                    msg = f"섹션 간의 계층 구조를 분석하는 중... ({recv_len:,} 데이터 수집)"
+                elif recv_len < 20000:
+                    msg = f"상세 항목과 작성 가이드를 정밀하게 추출 중... ({recv_len:,} 데이터 수집)"
+                else:
+                    msg = f"방대한 문서 구조를 최종 해독하고 있습니다... ({recv_len:,} 데이터 수집)"
+
+                yield {
+                    "status": "processing", 
+                    "message": msg,
+                    "chunk": chunk.text
+                }
+
+        yield {"status": "reassembling", "message": "계층 구조 트리를 복구하고 최종 검증하는 중..."}
+
+        # 공통 복구 로직 사용
+        final_nodes = _reconstruct_tree_from_json(full_text)
+        
+        if not final_nodes:
+            print("Warning: Reconstructed tree is empty!")
+            yield {"status": "error", "message": "문서 구조를 인식하지 못했습니다. (비어 있음)"}
+            return
+
+        print(f"Analysis completed successfully. Nodes: {len(final_nodes)}")
+        yield {
+            "status": "completed", 
+            "message": "분석 완료",
+            "data": {
+                "nodes": final_nodes,
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            }
+        }
+    except Exception as e:
+        traceback.print_exc()
+        print(f"Analyze structure stream error: {e}")
+        yield {"status": "error", "message": f"AI 분석 중 내부 오류 발생: {str(e)}"}
