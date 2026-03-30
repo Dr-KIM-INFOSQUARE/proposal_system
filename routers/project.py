@@ -570,6 +570,7 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
     
     return {
         "document_id": document_id,
+        "name": getattr(project, "name", project.filename) or project.filename,
         "filename": project.filename,
         "tree": tree,
         "selected_node_ids": project.selected_node_ids,
