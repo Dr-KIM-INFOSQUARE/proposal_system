@@ -6,11 +6,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
-from models.project_models import ProjectSaveRequest, ProjectRenameRequest
+from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest
 from services.pdf_service import convert_hwpx_to_pdf
+from services.gemini_service import enhance_business_idea
 import json
 import asyncio
-
 
 router = APIRouter(prefix="/api", tags=["Projects"])
 
@@ -26,7 +26,7 @@ MODEL_PRICING = {
     "models/gemini-2.5-pro": {"input": 1.25, "output": 10.00},
 }
 
-def log_usage(document_id: str, model_id: str, usage: dict, db: Session):
+def log_usage(document_id: str, model_id: str, usage: dict, db: Session, task_type: str = "analysis"):
     """토큰 사용량을 계산하고 DB에 기록합니다."""
     # models/ 접두사 일관성 유지
     full_model_id = model_id if model_id.startswith("models/") else f"models/{model_id}"
@@ -36,6 +36,10 @@ def log_usage(document_id: str, model_id: str, usage: dict, db: Session):
     input_tokens = usage.get("input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
     
+    # 입력과 출력 토큰이 모두 0이면 로그를 기록하지 않습니다.
+    if input_tokens == 0 and output_tokens == 0:
+        return
+
     # 비용 계산 (1M 토큰당 가격 기준)
     input_cost = (input_tokens / 1_000_000) * pricing["input"]
     output_cost = (output_tokens / 1_000_000) * pricing["output"]
@@ -47,6 +51,7 @@ def log_usage(document_id: str, model_id: str, usage: dict, db: Session):
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=usage.get("total_tokens", 0),
+        task_type=task_type,
         estimated_cost={
             "usd": round(total_cost, 6),
             "input_usd": round(input_cost, 6),
@@ -100,7 +105,7 @@ async def upload_document(
         db.add(project)
         
         # 사용량 기록
-        log_usage(document_id, model_id, usage, db)
+        log_usage(document_id, model_id, usage, db, task_type="analysis")
         
         db.commit()
  
@@ -162,7 +167,7 @@ async def upload_document_stream(
                 db.add(project)
                 
                 # 사용량 로깅
-                log_usage(document_id, model_id, final_data.get("usage", {}), db)
+                log_usage(document_id, model_id, final_data.get("usage", {}), db, task_type="analysis")
                 db.commit()
                 
                 # 최종 완료 시그널 (클라이언트에서 상태 마무리를 위해 사용)
@@ -208,7 +213,7 @@ async def reanalyze_project_stream(
                 # DB 업데이트
                 project.parsed_tree = final_data["nodes"]
                 # 사용량 로깅
-                log_usage(document_id, model_id, final_data.get("usage", {}), db)
+                log_usage(document_id, model_id, final_data.get("usage", {}), db, task_type="analysis")
                 db.commit()
                 
                 yield f"data: {json.dumps({'status': 'final', 'document_id': document_id, 'tree': final_data['nodes']})}\n\n"
@@ -229,18 +234,34 @@ async def get_usage_statistics(db: Session = Depends(get_db)):
     total_output = sum(log.output_tokens for log in logs)
     total_cost_usd = sum(log.estimated_cost.get("usd", 0.0) for log in logs) if logs else 0.0
     
+    # 작업별 집계
+    tasks = {}
+    for log in logs:
+        t = getattr(log, "task_type", "analysis")
+        if t not in tasks:
+            tasks[t] = {"input_tokens": 0, "output_tokens": 0, "usd": 0.0, "calls": 0}
+        tasks[t]["input_tokens"] += log.input_tokens
+        tasks[t]["output_tokens"] += log.output_tokens
+        tasks[t]["usd"] += log.estimated_cost.get("usd", 0.0)
+        tasks[t]["calls"] += 1
+
+    for k in tasks:
+        tasks[k]["usd"] = round(tasks[k]["usd"], 4)
+    
     return {
         "summary": {
             "total_calls": len(logs),
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
-            "total_estimated_cost_usd": round(total_cost_usd, 4)
+            "total_estimated_cost_usd": round(total_cost_usd, 4),
+            "by_task": tasks
         },
         "logs": [
             {
                 "id": log.id,
                 "document_id": log.document_id,
                 "model_id": log.model_id,
+                "task_type": getattr(log, "task_type", "analysis"),
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
                 "cost": log.estimated_cost,
@@ -249,6 +270,17 @@ async def get_usage_statistics(db: Session = Depends(get_db)):
             for log in logs
         ]
     }
+
+@router.delete("/projects/usage/{log_id}")
+async def delete_usage_log(log_id: int, db: Session = Depends(get_db)):
+    """특정 비용 로그를 삭제합니다."""
+    log = db.query(UsageLog).filter(UsageLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+        
+    db.delete(log)
+    db.commit()
+    return {"status": "success", "message": "Log deleted successfully"}
 
 @router.post("/projects/{document_id}/reanalyze")
 async def reanalyze_project(
@@ -324,7 +356,6 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     
     db.commit()
     return {"status": "success", "message": "Project saved successfully"}
-
 @router.post("/projects/rename")
 async def rename_project(request: ProjectRenameRequest, db: Session = Depends(get_db)):
     """프로젝트의 이름을 변경합니다."""
@@ -335,22 +366,102 @@ async def rename_project(request: ProjectRenameRequest, db: Session = Depends(ge
     project.name = request.new_name
     db.commit()
     return {"status": "success", "message": "Project renamed successfully"}
+@router.post("/projects/{document_id}/idea/enhance")
+async def enhance_idea(document_id: str, request: IdeaEnhanceRequest, db: Session = Depends(get_db)):
+    """사용자의 아이디어를 마스터 브리프로 고도화합니다."""
+    if document_id != request.document_id:
+        raise HTTPException(status_code=400, detail="Document ID mismatch")
+        
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        result = await enhance_business_idea(request.idea_text, request.model_id)
+        
+        # 비용 기록
+        if result.get("usage"):
+            log_usage(document_id, request.model_id, result["usage"], db, task_type="idea_enhance")
+            
+        return {
+            "status": "success",
+            "master_brief": result["master_brief"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/projects/{document_id}/idea/enhance-stream")
+async def enhance_idea_stream(
+    document_id: str, 
+    request: IdeaEnhanceRequest,
+    db: Session = Depends(get_db)):
+    """사용자의 아이디어를 마스터 브리프로 고도화하며 실시간 피드백을 제공합니다."""
+    
+    if document_id != request.document_id:
+        raise HTTPException(status_code=400, detail="Document ID mismatch")
+        
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    async def event_generator():
+        try:
+            from services.gemini_service import enhance_business_idea_stream
+            async for chunk in enhance_business_idea_stream(request.idea_text, request.model_id):
+                # 데이터가 완료 상태이면 요금 및 결과 로깅
+                if chunk.get("status") == "completed":
+                    data = chunk.get("data", {})
+                    if data.get("usage"):
+                        # 스트리밍 방식에서는 usage 정보 활용이 제한적일 수 있음.
+                        log_usage(document_id, request.model_id, data["usage"], db, task_type="idea_enhance")
+                
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/projects/{document_id}/idea/save")
+async def save_idea(document_id: str, request: IdeaSaveRequest, db: Session = Depends(get_db)):
+    """확정된 마스터 브리프를 프로젝트 DB에 저장합니다."""
+    if document_id != request.document_id:
+        raise HTTPException(status_code=400, detail="Document ID mismatch")
+        
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    project.master_brief = request.master_brief
+    if hasattr(project, "initial_idea"):
+        project.initial_idea = request.initial_idea
+    db.commit()
+    
+    return {"status": "success", "message": "아이디어가 성공적으로 저장되었습니다."}
 
 @router.get("/projects")
 async def list_projects(db: Session = Depends(get_db)):
     """저장된 모든 프로젝트 목록을 반환합니다."""
     projects = db.query(Project).order_by(Project.created_at.desc()).all()
-    return [
-        {
+    
+    result = []
+    for p in projects:
+        statuses = {
+            "analysis": True if p.selected_node_ids else False,
+            "idea_enhance": True if p.master_brief else False,
+            "proposal_write": False # TODO: 추후 결과물 컬럼 추가 시 변경
+        }
+        
+        result.append({
             "id": str(p.id),
             "document_id": p.document_id,
             "name": p.name or p.filename, # 프로젝트 별칭 우선
             "filename": p.filename, # 원본 파일명
-            "status": "분석 완료" if p.selected_node_ids else "분석 진행 중",
+            "status": statuses,
             "updatedAt": p.created_at.strftime("%Y-%m-%d")
-        }
-        for p in projects
-    ]
+        })
+    return result
 @router.get("/projects/{document_id}/export")
 async def export_project(document_id: str, db: Session = Depends(get_db)):
     """저장된 노드들을 기반으로 실제 트리 컨텐츠를 필터링하여 최종 JSON을 반환합니다."""
@@ -463,6 +574,8 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
         "tree": tree,
         "selected_node_ids": project.selected_node_ids,
         "content_node_ids": project.content_node_ids,
+        "master_brief": project.master_brief,
+        "initial_idea": getattr(project, "initial_idea", None),
         "pdf_url": f"/uploads/{document_id}.pdf"
     }
 

@@ -19,8 +19,13 @@ function App() {
   const [originalFileName, setOriginalFileName] = useState<string | null>(null); // 원본 파일 이름
   const [fileSize, setFileSize] = useState<string | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [initialMasterBrief, setInitialMasterBrief] = useState<string>('');
+  const [initialIdeaData, setInitialIdeaData] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  
+  const [isEnhancing, setIsEnhancing] = useState<boolean>(false);
+  const [enhanceMessage, setEnhanceMessage] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -75,8 +80,10 @@ function App() {
         setCurrentDocumentId(res.document_id);
         setTreeData(res.tree || []);
         setPdfUrl(res.pdf_url);
-        // 프로젝트 이름 및 원본 파일 이름 설정
-        setFileName(selectedFile.name);
+        // 사용자가 이미 프로젝트 이름을 변경했으면 유지, 아니면 파일 이름 사용
+        if (!fileName || fileName === selectedFile.name) {
+          setFileName(selectedFile.name);
+        }
         setOriginalFileName(selectedFile.name);
       }
       setSelectedFile(null);
@@ -147,6 +154,8 @@ function App() {
       setOriginalFileName(res.filename);
       setFileSize("저장됨");
       setPdfUrl(res.pdf_url);
+      setInitialMasterBrief(res.master_brief || '');
+      setInitialIdeaData(res.initial_idea || '');
       setActiveView('analysis');
     } catch (err) {
       alert("프로젝트를 불러오지 못했습니다: " + err);
@@ -182,6 +191,8 @@ function App() {
       setOriginalFileName(null);
       setFileSize(null);
       setPdfUrl(null);
+      setInitialMasterBrief('');
+      setInitialIdeaData('');
       setSelectedFile(null);
       setIsUploading(false);
       setActiveView('analysis');
@@ -209,6 +220,8 @@ function App() {
         setCurrentDocumentId(null);
         setTreeData([]);
         setFileName(null);
+        setInitialMasterBrief('');
+        setInitialIdeaData('');
       }
     } catch (err) {
       alert("삭제 중 오류가 발생했습니다: " + err);
@@ -229,19 +242,36 @@ function App() {
         onOpenProject={handleOpenProject}
       />
       <main className="flex-1 lg:ml-96 w-full min-w-0 bg-surface flex flex-col min-h-screen transition-all duration-300">
-        <Header onToggleSidebar={toggleSidebar} onReset={handleReset} />
+        <Header 
+          onToggleSidebar={toggleSidebar} 
+          onReset={handleReset} 
+          projectName={fileName}
+          onProjectNameChange={(name: string) => {
+            setFileName(name);
+          }}
+          isAnalyzing={isUploading || isEnhancing}
+          aiMessage={isUploading ? uploadMessage : (isEnhancing ? enhanceMessage : null)}
+        />
         {activeView === 'analysis' ? (
           <div className="block flex-1 flex-col relative">
             <AnalysisWorkflow 
                 initialTreeData={treeData} 
+                initialMasterBrief={initialMasterBrief}
+                initialIdeaData={initialIdeaData}
                 fileName={fileName}
                 fileSize={fileSize}
                 pdfUrl={pdfUrl}
+                documentId={currentDocumentId}
+                selectedModel={selectedModel}
                 onSave={handleSave} 
                 onExport={handleExport} 
                 onReanalyze={handleReanalyze}
                 isAnalyzing={isUploading}
                 uploadMessage={uploadMessage}
+                onEnhanceStateChange={(active: boolean, msg?: string) => {
+                    setIsEnhancing(active);
+                    if (msg) setEnhanceMessage(msg);
+                }}
                 onFileSelect={handleFileSelect}
                 onStartAnalysis={handleStartAnalysis}
                 onCancelSelection={handleCancelSelection}

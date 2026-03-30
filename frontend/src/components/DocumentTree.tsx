@@ -1,7 +1,7 @@
 import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { TreeNode } from './TreeNode';
 import type { DocumentNode } from '../types';
-import { toggleNode, toggleContentNode, updateNodeProperty } from '../utils/treeLogic';
+import { toggleNode, toggleContentNode, updateNodeProperty, deleteNode } from '../utils/treeLogic';
 
 interface DocumentTreeProps {
   initialTreeData: DocumentNode[];
@@ -79,6 +79,10 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
 
   const handleUpdateProperty = (id: string | number, property: keyof DocumentNode, value: any) => {
     setTreeData(prev => updateNodeProperty(prev, id, property, value));
+  };
+
+  const handleDeleteNode = (id: string | number) => {
+    setTreeData(prev => deleteNode(prev, id));
   };
 
 
@@ -184,7 +188,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
 
         <div className="flex flex-col xl:flex-row items-start gap-6 md:gap-10">
             {/* 왼쪽: 문서 구조 트리 */}
-            <section className="flex-1 w-full bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-inner border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300">
+            <section className="xl:flex-[6] xl:min-w-0 w-full bg-surface-container-lowest rounded-xl p-5 md:p-8 shadow-inner border border-outline-variant/10 flex flex-col transition-all duration-300">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 md:mb-8">
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-3">
@@ -206,7 +210,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
                     </div>
                 </div>
  
-                <div className="space-y-4">
+                <div className="space-y-2">
                    {treeData.map(node => (
                      <TreeNode 
                         key={node.id} 
@@ -214,6 +218,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
                         onToggleCheck={handleToggleCheck} 
                         onToggleContentCheck={handleToggleContentCheck} 
                         onUpdateProperty={handleUpdateProperty}
+                        onDeleteNode={handleDeleteNode}
                         level={0} 
                      />
                    ))}
@@ -222,7 +227,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
  
             {/* 오른쪽: PDF 미리보기/원본 보기 */}
             {isPreviewVisible ? (
-                <section className="xl:basis-[45%] w-full xl:w-[45%] bg-surface-container-low rounded-xl shadow-2xl border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right sticky top-2 h-[calc(100vh-40px)] min-h-[600px] z-50">
+                <section className="xl:flex-[4] xl:min-w-0 w-full bg-surface-container-low rounded-xl shadow-2xl border border-outline-variant/10 overflow-hidden flex flex-col transition-all duration-300 animate-slide-in-right sticky top-2 h-[calc(100vh-40px)] min-h-[600px] z-50">
                     <div className="flex items-center justify-between px-5 py-3 bg-surface-container-high/50 border-b border-outline-variant/10">
                         <div className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-primary text-sm">visibility</span>

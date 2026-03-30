@@ -4,7 +4,11 @@ interface Project {
   id: string;
   name: string;
   filename: string;
-  status: string;
+  status: {
+    analysis: boolean;
+    idea_enhance: boolean;
+    proposal_write: boolean;
+  } | string;
   updatedAt: string;
 }
 
@@ -102,7 +106,30 @@ export const ProjectList: React.FC<ProjectListProps> = ({
                     </td>
                     <td className="p-4 md:p-5 text-outline truncate max-w-[150px] md:max-w-[200px]" title={p.filename}>{p.filename}</td>
                     <td className="p-4 md:p-5">
-                      <span className="inline-block px-2 py-1 md:px-2.5 md:py-1 bg-primary-fixed text-primary text-[0.65rem] md:text-xs font-bold rounded-md whitespace-nowrap">{p.status}</span>
+                      {typeof p.status === 'object' ? (
+                        <div className="flex flex-col gap-1.5">
+                           <div className={`flex items-center gap-1.5 text-[10px] md:text-xs font-bold ${p.status.analysis ? 'text-primary' : 'text-outline-variant'}`}>
+                              <span className="material-symbols-outlined text-[14px]">
+                                 {p.status.analysis ? 'check_circle' : 'radio_button_unchecked'}
+                              </span>
+                              <span>문서 구조 분석</span>
+                           </div>
+                           <div className={`flex items-center gap-1.5 text-[10px] md:text-xs font-bold ${p.status.idea_enhance ? 'text-primary' : 'text-outline-variant'}`}>
+                              <span className="material-symbols-outlined text-[14px]">
+                                 {p.status.idea_enhance ? 'check_circle' : 'radio_button_unchecked'}
+                              </span>
+                              <span>사업 아이디어 구축</span>
+                           </div>
+                           <div className={`flex items-center gap-1.5 text-[10px] md:text-xs font-bold ${p.status.proposal_write ? 'text-primary' : 'text-outline-variant'}`}>
+                              <span className="material-symbols-outlined text-[14px]">
+                                 {p.status.proposal_write ? 'check_circle' : 'radio_button_unchecked'}
+                              </span>
+                              <span>사업계획서 작성</span>
+                           </div>
+                        </div>
+                      ) : (
+                        <span className="inline-block px-2 py-1 md:px-2.5 md:py-1 bg-surface-variant text-on-surface-variant text-[0.65rem] md:text-xs font-bold rounded-md whitespace-nowrap">{typeof p.status === 'string' ? p.status : '알 수 없음'}</span>
+                      )}
                     </td>
                     <td className="p-4 md:p-5 text-outline whitespace-nowrap">{p.updatedAt}</td>
                     <td className="p-4 md:p-5 text-center whitespace-nowrap">

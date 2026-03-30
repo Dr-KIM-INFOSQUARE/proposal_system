@@ -6,6 +6,7 @@ interface TreeNodeProps {
   onToggleCheck: (id: string | number, checked: boolean) => void;
   onToggleContentCheck: (id: string | number, checked: boolean) => void;
   onUpdateProperty: (id: string | number, property: keyof DocumentNode, value: any) => void;
+  onDeleteNode?: (id: string | number) => void;
   level?: number;
 }
 
@@ -14,12 +15,16 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
     onToggleCheck, 
     onToggleContentCheck, 
     onUpdateProperty,
+    onDeleteNode,
     level = 0 
 }) => {
   const hasChildren = node.children && node.children.length > 0;
   const checkboxRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const [contentHover, setContentHover] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(node.title);
 
   useEffect(() => {
     if (checkboxRef.current) {
@@ -27,9 +32,63 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
     }
   }, [node.indeterminate]);
 
+  // 편집 시작 시 input에 포커스
+  useEffect(() => {
+    if (isEditing && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [isEditing]);
+
+  // 제목 변경사항 동기화
+  useEffect(() => {
+    setEditTitle(node.title);
+  }, [node.title]);
+
+  const handleEditStart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsEditing(true);
+  };
+
+  const handleEditSave = () => {
+    const trimmed = editTitle.trim();
+    if (trimmed && trimmed !== node.title) {
+      onUpdateProperty(node.id, 'title', trimmed);
+    } else {
+      setEditTitle(node.title); // 빈 값이면 원래대로 복구
+    }
+    setIsEditing(false);
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleEditSave();
+    } else if (e.key === 'Escape') {
+      setEditTitle(node.title);
+      setIsEditing(false);
+    }
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const childCount = countChildren(node);
+    const message = childCount > 0
+      ? `"${node.title}" 노드와 하위 ${childCount}개 항목을 모두 삭제하시겠습니까?`
+      : `"${node.title}" 노드를 삭제하시겠습니까?`;
+    
+    if (window.confirm(message)) {
+      onDeleteNode?.(node.id);
+    }
+  };
+
+  const countChildren = (n: DocumentNode): number => {
+    if (!n.children) return 0;
+    return n.children.reduce((sum, child) => sum + 1 + countChildren(child), 0);
+  };
+
   return (
-    <div className={`space-y-3 ${level > 0 ? 'ml-7 sm:ml-9 md:ml-12 border-l-2 border-surface-container-high pl-4 md:pl-8' : ''}`}>
-      <div className="flex items-start sm:items-center gap-3 sm:gap-4 group mt-3">
+    <div className={`space-y-1.5 ${level > 0 ? 'ml-5 sm:ml-6 md:ml-8 border-l-2 border-surface-container-high pl-3 md:pl-5' : ''}`}>
+      <div className="flex items-start sm:items-center gap-2 sm:gap-3 group/node mt-1.5">
         <input 
           type="checkbox" 
           ref={checkboxRef}
@@ -38,28 +97,66 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
           className="w-4 h-4 md:w-5 md:h-5 mt-1 sm:mt-0 rounded text-primary border-outline-variant focus:ring-primary/20 cursor-pointer shrink-0" 
         />
         <div 
-          onClick={() => setIsExpanded(!isExpanded)}
+          onClick={() => !isEditing && setIsExpanded(!isExpanded)}
+          title={node.title}
           className={`flex-1 flex items-center justify-between gap-3 bg-white px-3 md:px-4 py-2.5 md:py-3 rounded-lg hover:bg-primary/5 transition-all cursor-pointer border-l-4 ${level === 0 ? 'border-primary shadow-sm' : 'border-outline-variant/30 hover:border-primary/50'} ${contentHover ? 'bg-primary/5 border-primary/50' : ''} ${isExpanded ? 'bg-primary-fixed/10 ring-1 ring-primary/20' : 'border border-outline-variant/10'}`}
         >
-          <div className="flex items-center gap-3">
-            <span className={`${level === 0 ? 'font-bold text-sm md:text-base' : 'text-xs md:text-sm font-semibold'} text-on-surface`}>
-              {node.title}
-            </span>
-            {node.type === 'table' && (
-              <span className="bg-primary-fixed text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-primary uppercase tracking-wider">표</span>
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            {isEditing ? (
+              <input
+                ref={editInputRef}
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onBlur={handleEditSave}
+                onKeyDown={handleEditKeyDown}
+                onClick={(e) => e.stopPropagation()}
+                className={`flex-1 bg-white border-2 border-primary/40 rounded-md px-2 py-1 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all ${level === 0 ? 'font-bold text-sm md:text-base' : 'text-xs md:text-sm font-semibold'} text-on-surface`}
+              />
+            ) : (
+              <span className={`${level === 0 ? 'font-bold text-sm md:text-base' : 'text-xs md:text-sm font-semibold'} text-on-surface truncate`} title={node.title}>
+                {node.title}
+              </span>
             )}
-            {node.type === 'item' && (
-               <span className="bg-surface-container-highest text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-outline uppercase tracking-wider">세부항목</span>
+            {!isEditing && node.type === 'table' && (
+              <span className="bg-primary-fixed text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-primary uppercase tracking-wider shrink-0">표</span>
             )}
-            {node.writingGuide && (
-               <span className="flex items-center gap-1 text-[10px] text-primary font-bold">
+            {!isEditing && node.type === 'item' && (
+               <span className="bg-surface-container-highest text-[9px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 rounded text-outline uppercase tracking-wider shrink-0">세부항목</span>
+            )}
+            {!isEditing && node.writingGuide && (
+               <span className="flex items-center gap-1 text-[10px] text-primary font-bold shrink-0">
                  <span className="material-symbols-outlined text-xs">lightbulb</span> 작성요령 포함
                </span>
             )}
           </div>
-          <span className={`material-symbols-outlined transition-transform duration-300 text-outline ${isExpanded ? 'rotate-180' : ''}`}>
-            {isExpanded ? 'expand_less' : 'expand_more'}
-          </span>
+          
+          {/* 호버 시 수정/삭제 아이콘 */}
+          <div className="flex items-center gap-1 shrink-0">
+            {!isEditing && (
+              <div className="flex items-center gap-0.5 opacity-0 group-hover/node:opacity-100 transition-opacity duration-200">
+                <button
+                  onClick={handleEditStart}
+                  className="p-1 rounded-md hover:bg-primary/10 text-outline hover:text-primary transition-all"
+                  title="노드 제목 수정"
+                >
+                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                </button>
+                {onDeleteNode && (
+                  <button
+                    onClick={handleDelete}
+                    className="p-1 rounded-md hover:bg-red-50 text-outline hover:text-red-500 transition-all"
+                    title="노드 삭제"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">delete</span>
+                  </button>
+                )}
+              </div>
+            )}
+            <span className={`material-symbols-outlined transition-transform duration-300 text-outline ${isExpanded ? 'rotate-180' : ''}`}>
+              {isExpanded ? 'expand_less' : 'expand_more'}
+            </span>
+          </div>
         </div>
         {node.checked && (
           <div 
@@ -82,7 +179,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
       </div>
 
       {isExpanded && (
-        <div className="ml-8 sm:ml-9 md:ml-12 mt-2 p-4 md:p-6 bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-sm animate-fade-in space-y-4">
+        <div className="ml-4 sm:ml-5 md:ml-6 mt-1.5 p-3 md:p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-sm animate-fade-in space-y-3">
           {node.writingGuide && (
             <div className="bg-primary-fixed/5 p-4 rounded-lg border border-primary-fixed/20">
               <div className="flex items-center gap-2 text-primary mb-2">
@@ -114,7 +211,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
       )}
       
       {hasChildren && (
-        <div className="space-y-3 relative mt-3">
+        <div className="space-y-1.5 relative mt-1.5">
           {node.children!.map(child => (
             <TreeNode 
               key={child.id} 
@@ -122,6 +219,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
               onToggleCheck={onToggleCheck} 
               onToggleContentCheck={onToggleContentCheck} 
               onUpdateProperty={onUpdateProperty}
+              onDeleteNode={onDeleteNode}
               level={level + 1} 
             />
           ))}

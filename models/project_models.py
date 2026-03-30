@@ -11,3 +11,13 @@ class ProjectSaveRequest(BaseModel):
 class ProjectRenameRequest(BaseModel):
     document_id: str
     new_name: str # 새 프로젝트 명
+
+class IdeaEnhanceRequest(BaseModel):
+    document_id: str
+    idea_text: str
+    model_id: str = "models/gemini-3.1-pro-preview"
+
+class IdeaSaveRequest(BaseModel):
+    document_id: str
+    master_brief: str
+    initial_idea: Optional[str] = None

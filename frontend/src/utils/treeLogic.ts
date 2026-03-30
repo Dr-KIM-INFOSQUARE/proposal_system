@@ -90,3 +90,12 @@ export const toggleContentNode = (tree: DocumentNode[], targetId: string | numbe
   toggleRecursive(newTree);
   return newTree;
 };
+
+export const deleteNode = (tree: DocumentNode[], targetId: string | number): DocumentNode[] => {
+  return tree
+    .filter(node => node.id !== targetId)
+    .map(node => ({
+      ...node,
+      children: node.children ? deleteNode(node.children, targetId) : []
+    }));
+};

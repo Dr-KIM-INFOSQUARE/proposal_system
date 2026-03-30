@@ -59,6 +59,17 @@ export const api = {
     return response.json();
   },
   
+  deleteUsageLog: async (logId: number) => {
+    const response = await fetch(`${API_BASE_URL}/projects/usage/${logId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Delete usage log failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
   getProjects: async () => {
     const response = await fetch(`${API_BASE_URL}/projects`);
     if (!response.ok) {
@@ -108,6 +119,97 @@ export const api = {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ detail: response.statusText }));
       throw new Error(errorData.detail || `Rename failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  enhanceIdea: async (documentId: string, ideaText: string, modelId: string = "models/gemini-3.1-pro-preview") => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        idea_text: ideaText,
+        model_id: modelId,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `Idea enhance failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
+  enhanceIdeaStream: async (documentId: string, ideaText: string, modelId: string, onProgress: (msg: string) => void) => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        idea_text: ideaText,
+        model_id: modelId,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Idea enhance failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.status === 'error') {
+              onProgress(data.message || '오류 발생');
+              throw new Error(data.message || 'Unknown stream error');
+            }
+            if (data.message) onProgress(data.message);
+            if (data.status === 'completed') result = data.data; // data.data contains master_brief and usage
+          } catch (e) {
+            if (e instanceof Error && e.message === 'Unknown stream error' || (e as Error).message.includes('error')) {
+              throw e;
+            }
+            console.error("Parse error in enhance stream", e);
+          }
+        }
+      }
+    }
+    return result;
+  },
+
+  saveMasterBrief: async (documentId: string, masterBrief: string, initialIdea?: string) => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        document_id: documentId, 
+        master_brief: masterBrief,
+        initial_idea: initialIdea
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Master brief save failed: ${response.statusText}`);
     }
     return response.json();
   },

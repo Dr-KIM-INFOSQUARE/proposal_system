@@ -18,12 +18,21 @@ interface UsageSummary {
   total_input_tokens: number;
   total_output_tokens: number;
   total_estimated_cost_usd: number;
+  by_task?: {
+    [key: string]: {
+      input_tokens: number;
+      output_tokens: number;
+      usd: number;
+      calls: number;
+    }
+  };
 }
 
 interface UsageLog {
   id: number;
   document_id: string;
   model_id: string;
+  task_type?: string;
   input_tokens: number;
   output_tokens: number;
   cost: {
@@ -96,6 +105,16 @@ export const BillingView: React.FC = () => {
     }
   };
 
+  const handleDeleteLog = async (id: number) => {
+    if (!window.confirm("해당 분석 이력을 삭제하시겠습니까?")) return;
+    try {
+      await api.deleteUsageLog(id);
+      loadUsageData();
+    } catch (err) {
+      alert("삭제 실패: " + err);
+    }
+  };
+
   const formatPriceValue = (usd: number) => {
     if (currency === 'KRW') {
       return usd * exchangeRate;
@@ -109,6 +128,13 @@ export const BillingView: React.FC = () => {
       return `₩${Math.round(val).toLocaleString()}`;
     }
     return `$${val.toFixed(val < 0.01 ? 6 : 4)}`;
+  };
+
+  const getTaskTypeName = (type: string | undefined) => {
+    if (type === 'analysis') return '문서 구조 분석';
+    if (type === 'idea_enhance') return '사업 아이디어 구축';
+    if (type === 'proposal_write') return '사업계획서 작성';
+    return type || '알 수 없음';
   };
 
   // 필터링된 로그
@@ -394,6 +420,44 @@ export const BillingView: React.FC = () => {
         </div>
       </div>
 
+      {/* 작업별 집계 (Summary) */}
+      {summary?.by_task && (
+        <div className="mb-12">
+           <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-primary">pie_chart</span>
+              <h3 className="text-lg font-bold text-on-surface">작업별 누적 비용 현황</h3>
+           </div>
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+             {Object.entries(summary.by_task).map(([taskType, data]) => (
+                <div key={taskType} className="bg-surface-container-low border border-outline-variant/10 p-5 rounded-2xl shadow-sm hover:border-primary/30 transition-colors">
+                   <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                         <span className="material-symbols-outlined text-sm">
+                            {taskType === 'analysis' ? 'document_scanner' : taskType === 'idea_enhance' ? 'lightbulb' : 'edit_document'}
+                         </span>
+                      </div>
+                      <h4 className="font-bold text-on-surface text-sm">{getTaskTypeName(taskType)}</h4>
+                   </div>
+                   <div className="space-y-2">
+                       <div className="flex justify-between items-end">
+                          <span className="text-xs text-outline font-medium">비용</span>
+                          <span className="text-xl font-headline font-black text-secondary tracking-tight">{formatPrice(data.usd)}</span>
+                       </div>
+                       <div className="flex justify-between items-center pt-2 border-t border-outline-variant/10">
+                          <span className="text-[10px] text-outline uppercase font-bold tracking-widest">호출 횟수</span>
+                          <span className="text-xs font-bold text-on-surface">{data.calls.toLocaleString()}회</span>
+                       </div>
+                       <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-outline uppercase font-bold tracking-widest">총 토큰</span>
+                          <span className="text-xs font-bold text-on-surface">{(data.input_tokens + data.output_tokens).toLocaleString()}</span>
+                       </div>
+                   </div>
+                </div>
+             ))}
+           </div>
+        </div>
+      )}
+
       {/* 차트 영역 */}
       <div className="mb-12">
         <div className="flex items-center justify-between mb-4">
@@ -452,7 +516,6 @@ export const BillingView: React.FC = () => {
                           tick={{ fill: '#8C9199', fontSize: 10, fontWeight: 600 }}
                           tickFormatter={(val) => {
                              if (currency === 'KRW') {
-                                if (val >= 1000) return `₩${(val / 1000).toFixed(1)}k`;
                                 return `₩${Math.round(val).toLocaleString()}`;
                              }
                              return `$${val.toFixed(2)}`;
@@ -560,17 +623,24 @@ export const BillingView: React.FC = () => {
                 <table className="w-full text-left text-sm table-fixed min-w-[1000px]">
                   <thead>
                     <tr className="bg-surface-container-high/30 text-outline uppercase text-[10px] font-bold tracking-wider">
-                      <th className="px-6 py-4 w-52">일시</th>
+                      <th className="px-6 py-4 w-44">일시</th>
+                      <th className="px-6 py-4 w-44 whitespace-nowrap">분석 단계</th>
                       <th className="px-6 py-4">사용 모델</th>
-                      <th className="px-6 py-4 w-32">입력 토큰</th>
-                      <th className="px-6 py-4 w-32">출력 토큰</th>
-                      <th className="px-6 py-4 w-60">예상 비용 (단위: {currency})</th>
+                      <th className="px-6 py-4 w-28 whitespace-nowrap">입력 토큰</th>
+                      <th className="px-6 py-4 w-28 whitespace-nowrap">출력 토큰</th>
+                      <th className="px-6 py-4 w-52">예상 비용 (단위: {currency})</th>
+                      <th className="px-4 py-4 w-16 text-center">관리</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant/5">
                     {filteredLogs.length > 0 ? filteredLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-primary/5 transition-colors">
-                        <td className="px-6 py-4 text-on-surface-variant font-medium text-xs">{log.timestamp}</td>
+                        <td className="px-6 py-4 text-on-surface-variant font-medium text-xs whitespace-nowrap">
+                          {log.timestamp}
+                        </td>
+                        <td className="px-6 py-4 text-[10px] font-bold text-primary uppercase tracking-wide whitespace-nowrap">
+                          {getTaskTypeName(log.task_type)}
+                        </td>
                         <td className="px-6 py-4">
                           <span className="px-2.5 py-1 bg-surface-container-highest text-primary text-[10px] font-bold rounded-lg border border-primary/10">
                             {log.model_id.replace('models/', '')}
@@ -586,10 +656,19 @@ export const BillingView: React.FC = () => {
                               </span>
                           </div>
                         </td>
+                        <td className="px-4 py-4 text-center">
+                          <button
+                            title="로그 삭제"
+                            onClick={() => handleDeleteLog(log.id)}
+                            className="w-8 h-8 flex items-center justify-center text-error opacity-50 hover:opacity-100 hover:bg-error/10 rounded-full transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">delete</span>
+                          </button>
+                        </td>
                       </tr>
                     )) : (
                       <tr>
-                         <td colSpan={5} className="px-6 py-20 text-center text-outline">
+                         <td colSpan={7} className="px-6 py-20 text-center text-outline">
                             조건에 맞는 분석 이력이 없습니다.
                          </td>
                       </tr>
