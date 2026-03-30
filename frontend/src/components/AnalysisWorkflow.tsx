@@ -71,6 +71,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [masterBriefData, setMasterBriefData] = useState<any>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   
+  // Step 3 UI States
+  const [isCollectingData, setIsCollectingData] = useState(false);
+  const [collectedDraft, setCollectedDraft] = useState('');
+  
+  // Step 4 UI States
+  const [isEnhancingProposal, setIsEnhancingProposal] = useState(false);
+  const [finalProposal, setFinalProposal] = useState('');
+  
   // 트리가 입수되면 1단계를 자동으로 완료 처리
   useEffect(() => {
     if (props.initialTreeData.length > 0) {
@@ -552,20 +560,140 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           </div>
         </AccordionSection>
 
-        {/* Step 3: 사업계획서 작성 */}
+        {/* Step 3: 데이터 수집 및 초안 작성 */}
         <AccordionSection 
            number={3}
-           title="사업계획서 작성"
+           title="데이터 수집 및 초안 작성"
            isOpen={activeStep === 3}
            isCompleted={completedSteps.includes(3)}
            onToggle={() => toggleStep(3)}
            isDisabled={isStepDisabled(3)}
         >
-          <div className="py-20 flex flex-col items-center justify-center text-outline gap-4">
-             <div className="w-16 h-16 bg-surface-container rounded-full flex items-center justify-center">
-                <span className="material-symbols-outlined text-3xl opacity-30">edit_note</span>
+          <div className="p-6 md:p-8 flex flex-col gap-6 bg-surface-container-lowest/50">
+             <div className="flex flex-col gap-2">
+                 <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
+                     <span className="material-symbols-outlined text-primary">auto_stories</span>
+                     NotebookLM 기반 팩트 수집 및 초안 생성
+                 </h4>
+                 <p className="text-sm text-outline leading-relaxed break-keep">
+                     입력된 사업 아이디어(마스터 브리프)를 바탕으로, 가상의 NotebookLM 지식 베이스 문헌 및 웹 검색 데이터를 조합하여 각 목차별 객관적 근거를 수집하고 초안 텍스트를 작성합니다.
+                 </p>
              </div>
-             <p className="text-sm font-medium">사업계획서 생성을 시작할 수 있습니다.</p>
+
+             {!collectedDraft ? (
+                 <div className="flex flex-col items-center justify-center py-10 gap-4 border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-lowest shadow-inner">
+                     <div className="w-16 h-16 bg-primary/5 rounded-full flex items-center justify-center">
+                        <span className="material-symbols-outlined text-3xl text-primary opacity-60">database</span>
+                     </div>
+                     <button 
+                         onClick={() => {
+                             setIsCollectingData(true);
+                             // 임시 모의 로직 (2초 후 완료)
+                             setTimeout(() => {
+                                 setIsCollectingData(false);
+                                 setCollectedDraft("1. 기술개발의 필요성\\n본 스마트 비전 시스템은 기존 작업자의 수작업으로 이루어지던...\\n(💡 수집된 객관적 지표와 팩트 기반의 초안 데이터가 여기에 표시됩니다.)");
+                                 handleStepCompletion(3);
+                                 setTimeout(() => toggleStep(4), 500);
+                             }, 2000);
+                         }}
+                         disabled={isCollectingData}
+                         className="px-8 py-3.5 bg-primary text-white text-sm font-bold rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:translate-y-0"
+                     >
+                         {isCollectingData ? (
+                             <><span className="material-symbols-outlined text-xl animate-spin">refresh</span> 데이터 수집 및 초안 생성 중...</>
+                         ) : (
+                             <><span className="material-symbols-outlined text-xl">magic_button</span> ✨ 데이터 수집 및 초안 생성</>
+                         )}
+                     </button>
+                 </div>
+             ) : (
+                 <div className="flex flex-col gap-4 animate-fade-in">
+                     <div className="bg-surface border border-outline-variant/20 rounded-xl p-5 shadow-sm">
+                         <div className="flex justify-between items-center mb-4">
+                             <div className="text-sm font-black text-primary flex items-center gap-2">
+                                 <span className="material-symbols-outlined text-[16px]">check_circle</span> 데이터 수집 및 초안 작성 완료
+                             </div>
+                             <button onClick={() => setCollectedDraft('')} className="text-xs font-bold text-outline hover:text-primary transition-colors flex items-center gap-1">
+                                 <span className="material-symbols-outlined text-[14px]">refresh</span> 다시 수집하기
+                             </button>
+                         </div>
+                         <textarea 
+                             readOnly 
+                             value={collectedDraft} 
+                             className="w-full min-h-[150px] bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-4 text-sm resize-none outline-none font-mono text-on-surface leading-[1.8] custom-scrollbar"
+                         />
+                     </div>
+                 </div>
+             )}
+          </div>
+        </AccordionSection>
+
+        {/* Step 4: 사업계획서 고도화 및 파일 생성 */}
+        <AccordionSection 
+           number={4}
+           title="사업계획서 고도화 및 파일 생성"
+           isOpen={activeStep === 4}
+           isCompleted={completedSteps.includes(4)}
+           onToggle={() => toggleStep(4)}
+           isDisabled={isStepDisabled(4)}
+        >
+          <div className="p-6 md:p-8 flex flex-col gap-6 bg-surface-container-lowest/50">
+             <div className="flex flex-col gap-2">
+                 <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
+                     <span className="material-symbols-outlined text-tertiary">edit_document</span>
+                     설득력 강화 및 최종 HWPX 포맷팅
+                 </h4>
+                 <p className="text-sm text-outline leading-relaxed break-keep">
+                     NotebookLM이 정리한 초안과 근거 데이터를 Gemini를 활용하여 정부지원사업 심사위원들을 설득할 수 있는 고품질의 비즈니스 문장으로 윤문하고 최종 HWPX 파일을 변환 및 생성합니다.
+                 </p>
+             </div>
+
+             {!finalProposal ? (
+                 <div className="flex flex-col items-center justify-center py-10 gap-4 border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-lowest shadow-inner">
+                     <div className="w-16 h-16 bg-tertiary/5 rounded-full flex items-center justify-center">
+                        <span className="material-symbols-outlined text-3xl text-tertiary opacity-60">rocket_launch</span>
+                     </div>
+                     <button 
+                         onClick={() => {
+                             setIsEnhancingProposal(true);
+                             // 임시 모의 로직 (2.5초 후 완료)
+                             setTimeout(() => {
+                                 setIsEnhancingProposal(false);
+                                 setFinalProposal("1. 사업 개요 및 요약\\n본 과제는 '글로벌 초격차 기술을 선도하는...'\\n\\n(💡 제안서 양식에 맞추어 전문적인 어조로 윤문된 최종 텍스트 결과가 표시됩니다.)");
+                                 handleStepCompletion(4);
+                             }, 2500);
+                         }}
+                         disabled={isEnhancingProposal}
+                         className="px-8 py-3.5 bg-tertiary text-on-tertiary text-sm font-black rounded-xl shadow-[0_8px_16px_-4px_rgba(155,107,245,0.3)] hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:translate-y-0"
+                     >
+                         {isEnhancingProposal ? (
+                             <><span className="material-symbols-outlined text-xl animate-spin">refresh</span> 고도화 및 문서 생성 중...</>
+                         ) : (
+                             <><span className="material-symbols-outlined text-xl">rocket_launch</span> 🚀 최종 사업계획서 고도화 시작</>
+                         )}
+                     </button>
+                 </div>
+             ) : (
+                 <div className="flex flex-col gap-6 animate-fade-in">
+                     <div className="bg-surface border border-tertiary/20 rounded-xl p-5 shadow-sm ring-1 ring-tertiary/5">
+                         <div className="text-sm font-black text-tertiary flex items-center gap-2 mb-4">
+                             <span className="material-symbols-outlined text-[16px]">task_alt</span> 최종 고도화 텍스트
+                         </div>
+                         <textarea 
+                             readOnly 
+                             value={finalProposal} 
+                             className="w-full min-h-[200px] bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-4 text-sm resize-none outline-none font-mono text-on-surface leading-[1.8] custom-scrollbar"
+                         />
+                     </div>
+                     
+                     <div className="flex justify-end pt-2 border-t border-outline-variant/10">
+                         <button className="px-6 py-3.5 bg-primary text-white font-black text-sm rounded-xl shadow-md hover:shadow-lg hover:bg-primary/95 flex items-center gap-2 transition-all hover:-translate-y-0.5 active:translate-y-0 text-center w-full md:w-auto justify-center">
+                             <span className="material-symbols-outlined text-xl">download</span>
+                             최종 파일(HWPX) 다운로드
+                         </button>
+                     </div>
+                 </div>
+             )}
           </div>
         </AccordionSection>
       </div>
