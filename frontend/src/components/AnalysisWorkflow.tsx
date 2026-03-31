@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../services/api';
 import { DocumentTree } from './DocumentTree';
 import type { DocumentTreeRef } from './DocumentTree';
@@ -32,6 +34,36 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = (props) => {
       }}
       className={`auto-resize w-full min-h-[80px] text-sm resize-none outline-none bg-transparent text-on-surface font-mono overflow-hidden leading-[1.8] ${props.className || ''}`}
     />
+  );
+};
+
+interface MarkdownContentProps {
+  content: string;
+  className?: string;
+}
+
+const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, className }) => {
+  return (
+    <div className={`prose prose-sm max-w-none text-on-surface leading-[2] prose-headings:text-primary prose-a:text-primary prose-strong:text-primary-800 prose-p:mb-6 ${className || ''}`}>
+      <ReactMarkdown 
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({node, ...props}) => <h1 className="text-xl font-black text-primary mt-8 mb-4 border-b pb-2" {...props} />,
+          h2: ({node, ...props}) => <h2 className="text-lg font-bold text-primary mt-6 mb-3" {...props} />,
+          h3: ({node, ...props}) => <h3 className="text-base font-bold text-on-surface mt-4 mb-2" {...props} />,
+          ul: ({node, ...props}) => <ul className="list-disc list-outside ml-6 mb-6 space-y-2 marker:text-primary/50" {...props} />,
+          ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-6 mb-6 space-y-2 marker:text-primary/50" {...props} />,
+          li: ({node, ...props}) => <li className="pl-1 text-on-surface/90" {...props} />,
+          p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
+          strong: ({node, ...props}) => <strong className="font-black text-primary-800 bg-primary/5 px-1 rounded" {...props} />,
+          table: ({node, ...props}) => <div className="overflow-x-auto my-6 shadow-sm rounded-lg border border-outline-variant/20"><table className="min-w-full divide-y divide-outline-variant/20" {...props} /></div>,
+          th: ({node, ...props}) => <th className="bg-surface-container-high px-4 py-2 text-left text-xs font-bold text-primary uppercase tracking-wider" {...props} />,
+          td: ({node, ...props}) => <td className="px-4 py-2 text-xs border-t border-outline-variant/10 text-on-surface" {...props} />,
+        }}
+      >
+        {content || '내용이 없습니다.'}
+      </ReactMarkdown>
+    </div>
   );
 };
 
@@ -79,6 +111,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
   const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
 
+  // Step 2 UI States for tabs
+  const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
+  const [activeMasterBriefTab, setActiveMasterBriefTab] = useState<'edit' | 'preview'>('preview');
+
   // 초안 생성 실행 (SSE)
   const handleGenerateDraft = async () => {
     if (!props.documentId) {
@@ -86,12 +122,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       return;
     }
     
-    // 즉각적인 UI 피드백을 위해 상태 먼저 설정
     console.log("[Workflow] Starting draft generation. Mode:", researchMode);
     setIsGeneratingDraft(true);
     setDraftTree([]);
     
-    // 헤더 프로그레스 바 활성화
     if (props.onEnhanceStateChange) {
         props.onEnhanceStateChange(true, "초안 생성 초기화 중...");
     }
@@ -102,7 +136,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         props.selectedModel,
         researchMode,
         (msg) => {
-          // 헤더 텍스트 실시간 업데이트
           if (props.onEnhanceStateChange) {
               props.onEnhanceStateChange(true, msg);
           }
@@ -171,19 +204,48 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     if (props.initialTreeData.length > 0) {
       if (!completedSteps.includes(1)) {
         setCompletedSteps(prev => [...prev.filter(s => s !== 1), 1]);
-        setActiveStep(1); // 분석 완료 시 1단계를 열려있는 상태로 유지
+        setActiveStep(1);
       }
     } else {
       setCompletedSteps([]);
-      // 파일이 선택되어 있거나 분석 중이면 Step 1을 계속 열어둠
       if (props.hasSelectedFile || props.isAnalyzing) {
         setActiveStep(1);
       } else if (activeStep !== 1) {
-        // 아무것도 없는 초기 상태에서만 닫힘
-        setActiveStep(1); // 기본적으로 Step 1은 항상 열어둠
+        setActiveStep(1);
       }
     }
-  }, [props.initialTreeData]); // 전체 데이터 변화 감지
+  }, [props.initialTreeData]);
+  
+  // 기존 초안 데이터 복원 및 3단계 완료 처리
+  useEffect(() => {
+    if (props.initialTreeData.length > 0) {
+      const hasDraft = (nodes: DocumentNode[]): boolean => {
+        for (const node of nodes) {
+          if (node.draft_content) return true;
+          if (node.children && hasDraft(node.children)) return true;
+        }
+        return false;
+      };
+
+      if (hasDraft(props.initialTreeData)) {
+        console.log("[Workflow] Existing draft content found. Restoring draftTree and marking step 3 complete.");
+        setDraftTree(props.initialTreeData);
+        
+        setCompletedSteps(prev => {
+          const newSteps = [...prev];
+          [1, 2, 3].forEach(s => {
+            if (!newSteps.includes(s)) newSteps.push(s);
+          });
+          return newSteps;
+        });
+
+        const firstDraftNode = findFirstContentNode(props.initialTreeData);
+        if (firstDraftNode && !selectedNodeId) {
+          setSelectedNodeId(firstDraftNode.id);
+        }
+      }
+    }
+  }, [props.initialTreeData]);
 
   // 마스터 브리프 초기화
   useEffect(() => {
@@ -335,7 +397,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </div>
 
                 <div className="flex items-center gap-4 w-full md:w-auto justify-end">
-                    {/* 분석 시작 전 */}
                     {props.hasSelectedFile && !props.isAnalyzing && (
                         <div className="flex items-center gap-3 w-full md:w-auto">
                             <button 
@@ -354,7 +415,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                         </div>
                     )}
 
-                    {/* 분석 완료 후 액션 */}
                     {!props.hasSelectedFile && props.fileName && !props.isAnalyzing && (
                         <>
                             {props.onReanalyze && (
@@ -382,7 +442,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </div>
             </div>
 
-            {/* 본문 트리 영역 */}
             <DocumentTree 
                 {...props} 
                 ref={treeRef}
@@ -403,7 +462,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
            isDisabled={isStepDisabled(2)}
         >
           <div className="py-6 flex flex-col xl:flex-row gap-6">
-            {/* 왼쪽: 기초 아이디어 입력창 (투트랙 모드) */}
             <div className="flex-1 flex flex-col gap-4 bg-surface rounded-2xl p-6 border border-outline-variant/20 shadow-sm animate-fade-in min-h-[500px]">
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -412,29 +470,48 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                     </div>
                 </div>
                 
-                {/* 투트랙 탭 토글 */}
-                <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
-                   <button 
-                     onClick={() => setIdeaMode('guide')}
-                     className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'guide' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                   >
-                      <span className="material-symbols-outlined text-[16px]">integration_instructions</span>
-                      가이드 입력 모드
-                   </button>
-                   <button 
-                     onClick={() => setIdeaMode('free')}
-                     className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'free' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                   >
-                      <span className="material-symbols-outlined text-[16px]">edit_document</span>
-                      자유 입력 모드
-                   </button>
+                <div className="flex flex-col gap-2">
+                   <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
+                      <button 
+                        onClick={() => setIdeaMode('guide')}
+                        className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'guide' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                      >
+                         <span className="material-symbols-outlined text-[16px]">integration_instructions</span>
+                         가이드 입력 모드
+                      </button>
+                      <button 
+                        onClick={() => setIdeaMode('free')}
+                        className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'free' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                      >
+                         <span className="material-symbols-outlined text-[16px]">edit_document</span>
+                         자유 입력 모드
+                      </button>
+                   </div>
+                   
+                   {ideaMode === 'free' && (
+                        <div className="flex bg-surface-container-low p-1 rounded-lg self-start border border-outline-variant/20 scale-90 origin-left">
+                            <button 
+                                onClick={() => setActiveIdeaTab('edit')}
+                                className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeIdeaTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                            >
+                                <span className="material-symbols-outlined text-[14px]">edit</span>
+                                편집
+                            </button>
+                            <button 
+                                onClick={() => setActiveIdeaTab('preview')}
+                                className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeIdeaTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                            >
+                                <span className="material-symbols-outlined text-[14px]">visibility</span>
+                                미리보기
+                            </button>
+                        </div>
+                   )}
                 </div>
                 
                 <p className="text-xs text-outline mb-2">
                     <span className="text-primary font-medium">선택된 AI 모델({props.selectedModel})과 Google 웹 검색이 연동되어</span> 최신 정보 기반의 체계적인 사업계획서 기본 틀(Master Brief)로 탈바꿈해 드립니다.
                 </p>
 
-                {/* 입력 폼 영역 */}
                 <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
                    {ideaMode === 'guide' ? (
                       <div className="space-y-4">
@@ -460,13 +537,19 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                          </div>
                       </div>
                    ) : (
-                      <textarea 
-                          value={ideaText}
-                          onChange={(e) => setIdeaText(e.target.value)}
-                          placeholder="생각나시는 사업 아이템, 타겟 고객, 해결하려는 문제점 등을 자유롭게 구서나 복사해서 붙여넣어 주세요."
-                          className="flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-none focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed"
-                          disabled={isEnhancing}
-                      />
+                      activeIdeaTab === 'edit' ? (
+                        <textarea 
+                            value={ideaText}
+                            onChange={(e) => setIdeaText(e.target.value)}
+                            placeholder="생각나시는 사업 아이템, 타겟 고객, 해결하려는 문제점 등을 자유롭게 구서나 복사해서 붙여넣어 주세요."
+                            className="flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-none focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed custom-scrollbar"
+                            disabled={isEnhancing}
+                        />
+                      ) : (
+                        <div className="flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 overflow-y-auto custom-scrollbar shadow-inner">
+                           <MarkdownContent content={ideaText || '*입력된 내용이 없습니다.*'} />
+                        </div>
+                      )
                    )}
                 </div>
 
@@ -475,11 +558,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                         let finalPrompt = '';
                         if (ideaMode === 'guide') {
                            if (!guideAnswers.q1.trim()) return alert("1번 '아이템 한 줄 요약'은 필수입니다.");
-                           finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}
-2. 해결하려는 문제점: ${guideAnswers.q2.trim()}
-3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}
-4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}
-5. 기대 효과: ${guideAnswers.q5.trim()}`;
+                           finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}`;
                         } else {
                            if (!ideaText.trim()) return alert("자유 입력 모드에 내용을 입력해주세요.");
                            finalPrompt = ideaText.trim();
@@ -497,7 +576,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             let currentMasterBrief = masterBrief;
                             if (masterBriefData) currentMasterBrief = JSON.stringify(masterBriefData);
                             
-                            // 자동 저장 처리 (응답 지연을 방지하기 위해 await 하지 않거나 따로 처리)
                             api.saveMasterBrief(props.documentId, currentMasterBrief, initialIdeaJsonToSave).catch(e => console.error("Auto-save failed", e));
                             
                             if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "최신 웹 검색을 통해 시장 조사를 진행하는 중입니다...");
@@ -539,7 +617,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </button>
             </div>
 
-            {/* 오른쪽: 결과 및 에디터 */}
             <div className={`flex-[1.2] flex flex-col gap-4 bg-surface rounded-2xl p-6 border shadow-sm transition-all duration-500 delay-100 min-h-[500px] ${(masterBrief || masterBriefData) ? 'border-primary/40 ring-4 ring-primary/5 bg-primary/5' : 'border-outline-variant/20'}`}>
                 <div className="flex items-center gap-2 mb-2">
                     <span className="material-symbols-outlined text-primary text-2xl">description</span>
@@ -547,11 +624,33 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </div>
                 {(masterBrief || masterBriefData) ? (
                     <>
-                        <div className="flex justify-between items-end mb-2">
-                           <p className="text-xs text-outline font-medium">✨ AI가 아이디어를 분석하고 보강했습니다. (블록별로 내용을 직접 다듬을 수 있습니다)</p>
+                        <div className="flex justify-between items-center mb-2">
+                           <p className="text-xs text-outline font-medium">✨ AI가 아이디어를 분석하고 보강했습니다. (직접 다듬을 수 있습니다)</p>
+                           
+                           <div className="flex bg-surface-container-low p-1 rounded-lg border border-outline-variant/20 scale-90 origin-right">
+                                <button 
+                                    onClick={() => setActiveMasterBriefTab('edit')}
+                                    className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeMasterBriefTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                                >
+                                    <span className="material-symbols-outlined text-[14px]">edit</span>
+                                    편집
+                                </button>
+                                <button 
+                                    onClick={() => setActiveMasterBriefTab('preview')}
+                                    className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeMasterBriefTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                                >
+                                    <span className="material-symbols-outlined text-[14px]">visibility</span>
+                                    미리보기
+                                </button>
+                            </div>
                         </div>
                         
-                        {masterBriefData ? (
+                        {activeMasterBriefTab === 'preview' ? (
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar mb-2 bg-surface-container-lowest border border-primary/20 rounded-xl p-6 shadow-inner">
+                                <MarkdownContent content={masterBrief || (masterBriefData ? 
+                                    `# 1. 핵심 컨셉\n${masterBriefData.core_concept || ''}\n\n# 2. 해결하려는 문제\n${masterBriefData.problem_statement || ''}\n\n# 3. 코어 솔루션\n${masterBriefData.solution_and_tech || ''}\n\n# 4. 타겟 시장\n${masterBriefData.target_market || ''}\n\n# 5. 기대 효과\n${masterBriefData.expected_effect || ''}` : '')} />
+                            </div>
+                        ) : masterBriefData ? (
                             <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar mb-2">
                                <div className="bg-surface-container-lowest border border-primary/20 hover:border-primary/50 rounded-xl p-4 shadow-sm transition-colors group/block relative">
                                   <label className="text-sm font-black text-primary mb-2 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">stars</span> 1. 핵심 컨셉 (요약)</label>
@@ -597,29 +696,12 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                         <button 
                             onClick={async () => {
                                 if (!props.documentId) return;
-                                
                                 let finalMasterBriefToSave = masterBrief;
-                                
-                                if (masterBriefData) {
-                                    // 기존과 달리 마크다운으로 강제 변환하지 않고, 그대로 JSON String으로 저장합니다
-                                    // 이렇게 해야 나중에 로드할 때 "불록 형태"가 유지됩니다
-                                    finalMasterBriefToSave = JSON.stringify(masterBriefData);
-                                }
-                                
-                                const initialIdeaJsonToSave = JSON.stringify({
-                                    mode: ideaMode,
-                                    guideAnswers,
-                                    ideaText
-                                });
-                                
+                                if (masterBriefData) finalMasterBriefToSave = JSON.stringify(masterBriefData);
+                                const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, guideAnswers, ideaText });
                                 try {
                                     await api.saveMasterBrief(props.documentId, finalMasterBriefToSave, initialIdeaJsonToSave);
-                                    
-                                    // 성공 후 JSON 블록 모드를 풀지 않고 그대로 유지하여 UX 연속성 제공
-                                    
                                     handleStepCompletion(2);
-                                    
-                                    // 스크롤 이동 (선택적) 또는 자동 열기
                                     setTimeout(() => toggleStep(3), 300);
                                 } catch(err) {
                                     alert("저장 실패: " + err);
@@ -657,7 +739,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
            isDisabled={isStepDisabled(3)}
         >
           <div className="flex flex-col bg-surface-container-lowest/50 min-h-[400px]">
-             {/* 헤더 안내문 */}
              <div className="p-6 border-b border-outline-variant/10">
                  <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
                      <span className="material-symbols-outlined text-primary">auto_stories</span>
@@ -668,11 +749,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                  </p>
              </div>
 
-             {/* 메인 컨텐츠 영역 */}
-             <div className="flex-1 flex flex-col">
+             <div className="flex-1 w-full">
                 {draftTree.length === 0 && !isGeneratingDraft ? (
-                   /* 초기 상태: 시작 버튼 */
-                   <div className="flex-1 flex flex-col items-center justify-center p-12 gap-8">
+                   <div className="flex flex-col items-center justify-center p-12 gap-8 min-h-[400px]">
                       <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center relative">
                          <span className="material-symbols-outlined text-4xl text-primary opacity-60">database</span>
                          <div className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"></div>
@@ -718,8 +797,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                       </button>
                    </div>
                 ) : isGeneratingDraft ? (
-                   /* 생성 중 상태: 모던한 로딩 UI */
-                   <div className="flex-1 flex flex-col items-center justify-center p-12 gap-6 bg-surface-container-lowest/30">
+                   <div className="flex flex-col items-center justify-center p-12 gap-6 bg-surface-container-lowest/30 min-h-[400px]">
                       <div className="relative">
                          <div className="w-24 h-24 rounded-full border-4 border-primary/10 border-t-primary animate-spin"></div>
                          <div className="absolute inset-0 flex items-center justify-center">
@@ -754,83 +832,93 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                       </div>
                    </div>
                 ) : (
-                   /* 완료 상태: 스플릿 뷰 에디터 */
-                   <div className="flex flex-col md:flex-row flex-1 min-h-[500px]">
-                      {/* 좌측: 목차 트리 */}
-                      <div className="w-full md:w-64 border-r border-outline-variant/10 bg-surface-container-low/30 overflow-y-auto">
+                   <div className="flex flex-col md:flex-row items-start gap-6 p-6 relative">
+                      <div className="flex-1 min-w-0 bg-surface rounded-2xl border border-outline-variant/10 shadow-sm overflow-hidden">
                          <div className="p-4 border-b border-outline-variant/5 bg-surface-container-high/20">
-                            <span className="text-[10px] font-black text-outline uppercase tracking-wider">목차 네비게이션</span>
+                            <span className="text-xs font-black text-on-surface uppercase tracking-wider flex items-center gap-2">
+                               <span className="material-symbols-outlined text-[18px] text-primary">account_tree</span>
+                               목차 네비게이션
+                            </span>
                          </div>
-                         <nav className="p-2 flex flex-col gap-1">
+                         <nav className="p-3 flex flex-col gap-1.5 bg-white">
                             { (function renderToC(nodes: DocumentNode[], depth = 0) {
-                               return nodes.map(node => (
-                                  <React.Fragment key={node.id}>
-                                     <button
-                                        onClick={() => setSelectedNodeId(node.id)}
-                                        className={`w-full text-left p-2.5 rounded-lg text-xs transition-all flex items-center gap-2 group
-                                           ${selectedNodeId === node.id ? 'bg-primary text-white font-bold shadow-md' : 'hover:bg-surface-container-high text-on-surface/70'}
-                                           ${node.draft_content ? 'opacity-100' : 'opacity-40'}
-                                        `}
-                                        style={{ paddingLeft: `${depth * 12 + 10}px` }}
-                                     >
-                                        <span className={`material-symbols-outlined text-[16px] ${selectedNodeId === node.id ? 'text-white' : 'text-primary/40'}`}>
-                                           {node.children && node.children.length > 0 ? 'folder' : 'description'}
-                                        </span>
-                                        <span className="truncate">{node.title}</span>
-                                        {node.draft_content && selectedNodeId !== node.id && (
-                                           <span className="ml-auto w-1.5 h-1.5 rounded-full bg-success ring-2 ring-success/20"></span>
-                                        )}
-                                     </button>
-                                     {node.children && renderToC(node.children, depth + 1)}
-                                  </React.Fragment>
-                               ));
-                            })(draftTree)}
+                                return nodes.map(node => (
+                                   <React.Fragment key={node.id}>
+                                      <button
+                                         onClick={() => setSelectedNodeId(node.id)}
+                                         className={`w-full text-left p-3 rounded-xl text-xs transition-all flex items-center gap-2 group
+                                            ${selectedNodeId === node.id ? 'bg-primary text-white font-bold shadow-md ring-4 ring-primary/10' : 'hover:bg-surface-container-high text-on-surface/70'}
+                                            ${node.draft_content ? 'opacity-100' : 'opacity-40'}
+                                         `}
+                                         style={{ paddingLeft: `${depth * 16 + 12}px` }}
+                                      >
+                                         <span className={`material-symbols-outlined text-[18px] ${selectedNodeId === node.id ? 'text-white' : 'text-primary/40'}`}>
+                                            {node.children && node.children.length > 0 ? 'folder' : 'description'}
+                                         </span>
+                                         <span className="truncate">{node.title}</span>
+                                         {node.draft_content && (
+                                            <span className={`ml-auto flex items-center justify-center w-5 h-5 rounded-full ${selectedNodeId === node.id ? 'bg-white/20 text-white' : 'bg-green-100 text-green-600'} shadow-sm`}>
+                                               <span className="material-symbols-outlined text-[14px] font-black">check</span>
+                                            </span>
+                                         )}
+                                      </button>
+                                      {node.children && renderToC(node.children, depth + 1)}
+                                   </React.Fragment>
+                                ));
+                             })(draftTree)}
                          </nav>
                       </div>
 
-                      {/* 우측: 에디터 영역 */}
-                      <div className="flex-1 flex flex-col bg-white">
+                      <div className="w-full md:w-[600px] lg:w-[950px] sticky top-24 shrink-0 flex flex-col bg-white rounded-2xl border border-primary/20 shadow-2xl overflow-hidden z-20 animate-slide-up">
                          {selectedNode ? (
                             <>
-                               <div className="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between bg-surface-container-lowest">
-                                  <div className="flex items-center gap-2">
-                                     <span className="text-sm font-black text-on-surface">{selectedNode.title}</span>
-                                     <span className="text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded-full font-bold uppercase">Section Draft</span>
+                               <div className="px-5 py-4 border-b border-outline-variant/10 flex items-center justify-between bg-primary/5">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                     <span className="material-symbols-outlined text-primary text-[20px]">edit_note</span>
+                                     <span className="text-sm font-black text-on-surface truncate">{selectedNode.title}</span>
                                   </div>
-                                  <div className="flex bg-surface-container-high p-0.5 rounded-lg border border-outline-variant/10">
+                                  <div className="flex bg-surface-container-high p-1 rounded-xl border border-outline-variant/10 shrink-0">
                                      <button 
                                         onClick={() => setActiveTab('preview')}
-                                        className={`px-3 py-1 text-[10px] font-black rounded-md transition-all ${activeTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                        className={`px-4 py-1.5 text-xs font-black rounded-lg transition-all ${activeTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
                                      >미리보기</button>
                                      <button 
                                         onClick={() => setActiveTab('edit')}
-                                        className={`px-3 py-1 text-[10px] font-black rounded-md transition-all ${activeTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                        className={`px-4 py-1.5 text-xs font-black rounded-lg transition-all ${activeTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
                                      >편집</button>
                                   </div>
                                </div>
                                
-                               <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                               <div className="h-[700px] overflow-y-auto p-8 custom-scrollbar bg-surface-container-lowest">
                                   {activeTab === 'edit' ? (
                                      <textarea
                                         value={selectedNode.draft_content || ''}
                                         onChange={(e) => setDraftTree(prev => findAndUpdateNode(prev, selectedNode.id, e.target.value))}
-                                        className="w-full h-full min-h-[400px] text-sm leading-[1.8] text-on-surface outline-none font-mono resize-none bg-transparent"
+                                        className="w-full h-full min-h-[700px] text-sm leading-[2] text-on-surface outline-none font-mono resize-none bg-transparent"
                                         placeholder="이 섹션의 내용을 입력하세요..."
                                      />
                                   ) : (
-                                     <div className="prose prose-sm max-w-none text-on-surface leading-loose">
-                                        <div className="whitespace-pre-wrap font-sans text-xs bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/10 italic text-outline/80 mb-6 font-medium">
-                                            💡 초안은 AI에 의해 생성되었으므로, 반드시 내용을 검토하고 실정에 맞게 수정하시기 바랍니다.
+                                     <div className="markdown-preview max-w-none text-on-surface">
+                                        <div className="mb-8 p-5 bg-primary/5 rounded-2xl border border-primary/10 flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-primary text-[22px] mt-0.5">info</span>
+                                            <p className="text-sm text-primary/80 leading-relaxed font-medium">
+                                                AI 초안을 바탕으로 내용을 검토하고 실정에 맞게 보완해 주세요. 마크다운 형식이 자동 적용됩니다.
+                                            </p>
                                         </div>
-                                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{selectedNode.draft_content || '내용이 없습니다.'}</div>
+                                        <MarkdownContent content={selectedNode.draft_content || ''} />
                                      </div>
                                   )}
                                </div>
                             </>
                          ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center opacity-40">
-                               <span className="material-symbols-outlined text-5xl mb-3 text-primary">format_list_bulleted</span>
-                               <p className="text-sm font-bold text-on-surface">좌측 목차를 선택하여<br/>작성된 초안을 확인하고 수정하세요.</p>
+                            <div className="h-[800px] flex flex-col items-center justify-center p-12 text-center bg-surface-container-low/20">
+                               <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center mb-6">
+                                  <span className="material-symbols-outlined text-4xl text-primary/30">touch_app</span>
+                               </div>
+                               <h5 className="font-bold text-on-surface mb-2">섹션을 선택해 주세요</h5>
+                               <p className="text-xs text-outline leading-relaxed max-w-[200px]">
+                                  좌측 목차에서 내용을 확인하거나 수정할 섹션을 클릭하세요.
+                                </p>
                             </div>
                          )}
                       </div>
@@ -838,7 +926,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 )}
              </div>
 
-             {/* 하단 툴바 */}
              {draftTree.length > 0 && !isGeneratingDraft && (
                 <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between">
                    <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
@@ -850,7 +937,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                            if (!props.documentId) return;
                            try {
                                const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-                               await api.saveProject(props.documentId, props.fileName || 'Unknown', selectedIds, contentIds, draftTree);
+                               await api.saveProject(props.documentId, props.fileName || 'Untitled', props.fileName || 'Unknown File', selectedIds, contentIds, draftTree);
                                handleStepCompletion(3);
                                setTimeout(() => toggleStep(4), 300);
                            } catch(err) {
@@ -895,10 +982,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                      <button 
                          onClick={() => {
                              setIsEnhancingProposal(true);
-                             // 임시 모의 로직 (2.5초 후 완료)
                              setTimeout(() => {
                                  setIsEnhancingProposal(false);
-                                 setFinalProposal("1. 사업 개요 및 요약\\n본 과제는 '글로벌 초격차 기술을 선도하는...'\\n\\n(💡 제안서 양식에 맞추어 전문적인 어조로 윤문된 최종 텍스트 결과가 표시됩니다.)");
+                                 setFinalProposal("1. 사업 개요 및 요약\n본 과제는 '글로벌 초격차 기술을 선도하는...' \n\n(💡 제안서 양식에 맞추어 전문적인 어조로 윤문된 최종 텍스트 결과가 표시됩니다.)");
                                  handleStepCompletion(4);
                              }, 2500);
                          }}

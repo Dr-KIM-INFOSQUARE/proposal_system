@@ -29,6 +29,15 @@ class NotebookLMService:
                 return path
         return "nlm" # 기본값 (PATH에 있을 것으로 기대)
 
+    def _clean_citations(self, text: str) -> str:
+        """내용에서 [1], [2], [1, 2], [1-3] 등의 출처 표시를 제거합니다."""
+        if not text:
+            return text
+        # 패턴: [숫자], [숫자, 숫자], [숫자-숫자] 등 (앞의 공백 포함)
+        pattern = r"\s*\[\d+(?:[,\-\s]+\d+)*\]"
+        cleaned = re.sub(pattern, "", text)
+        return cleaned.strip()
+
     async def _run_command(self, args: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
         """nlm CLI 명령어를 실행하고 결과를 반환합니다."""
         cmd = [self.nlm_cmd] + args
@@ -250,10 +259,13 @@ class NotebookLMService:
             print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring expert persona")
             yield json.dumps({"phase": 4, "status": "Phase 4: 작성 전문가 페르소나 주입 중..."})
             persona_prompt = (
-                "너는 지금부터 정부지원사업 수석 컨설턴트야. 앞으로 내가 특정 목차를 주면, 오직 업로드된 사업 아이디어와 "
-                "검색된 소스만을 기반으로 사업계획서 초안을 작성해. "
-                "**[🚨절대 규칙🚨] 모든 문장은 명사형(음, 함, 됨 등)으로 끝맺고, 글머리기호(Bullet points)를 "
-                "적용하여 가독성을 극대화해라.**"
+                "너는 정부지원사업 수석 컨설턴트야. 앞으로 내가 특정 목차를 주면, 오직 업로드된 사업 아이디어와 "
+                "검색된 소스만을 기반으로 실제 사업계획서에 들어갈 **본문 내용만** 작성해. "
+                "**[🚨절대 규칙🚨]**\n"
+                "1. 모든 문장은 명사형(음, 함, 됨 등)으로 끝맺고, 글머리기호(Bullet points)를 적용할 것.\n"
+                "2. **'알겠습니다', '숙지했습니다', '도출했습니다'와 같은 서론, 결론, 부연 설명, 자기소개 및 작업 확인 멘트를 절대 작성하지 마.**\n"
+                "3. **본문 내용 중에 [1], [2], [1-3] 등의 출처 표시(Citation)를 절대 포함하지 마.**\n"
+                "4. 오직 사업계획서 대지(Markdown)에 들어갈 실질적인 본문 텍스트만 출력해."
             )
             await self._run_command(["notebook", "query", notebook_id, persona_prompt])
 
@@ -286,7 +298,8 @@ class NotebookLMService:
                             metadata_str = json.dumps(table_metadata, ensure_ascii=False)
                             prompt_parts.append(f"- 이 항목은 표(Table)로 작성되어야 해. 다음 구조를 참고하여 반드시 **Markdown 표 형식**으로 출력해 줘.\n  [표 구조]: {metadata_str}\n")
                         
-                        prompt_parts.append("지금까지의 규칙을 엄수하여 위 내용을 구체적인 수치와 근거를 포함하여 작성해 줘.")
+                        prompt_parts.append("- 출처 표시([1], [2] 등)는 절대 포함하지 말고 순수 본문 내용만 작성할 것.\n")
+                        prompt_parts.append("지금까지의 규칙을 엄수하여 위 내용을 구체적인 수치와 근거를 포함하여 **본문만** 작성해 줘. (부연 설명이나 수락 확인 멘트는 생략)")
                         
                         final_prompt = "".join(prompt_parts)
                         
@@ -309,6 +322,10 @@ class NotebookLMService:
                                 node["draft_content"] = raw_ans
                         except:
                             node["draft_content"] = raw_ans
+                            
+                        # 사후 필터링: 문장 끝의 [1], [2] 등 제거
+                        if node.get("draft_content"):
+                            node["draft_content"] = self._clean_citations(node["draft_content"])
                             
                     # 자식 노드 탐색 (content 여부와 관계없이 재귀)
                     if "children" in node and node["children"]:
