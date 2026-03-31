@@ -489,27 +489,33 @@ async def list_projects(
     
     result = []
     for p in projects:
-        # (기존 4단계 상태 판별 로직 유지)
-        is_analysis = True if p.selected_node_ids and len(p.selected_node_ids) > 0 else False
-        is_idea = True if p.master_brief and len(p.master_brief.strip()) > 0 else False
+        # 누적형 진행 프로세스 판별 로직 (Sequential)
         
-        has_draft = False
+        # 3단계: 초안(Draft) 유무 확인
+        has_any_draft = False
         if p.parsed_tree:
-            def check_draft(nodes):
+            def check_draft_content(nodes):
                 for n in nodes:
-                    if n.get("draft_content"): return True
-                    if n.get("children") and check_draft(n["children"]): return True
+                    if n.get("draft_content") and len(n["draft_content"].strip()) > 0: return True
+                    if n.get("children") and check_draft_content(n["children"]): return True
                 return False
-            has_draft = check_draft(p.parsed_tree)
-            
-        is_draft = True if p.notebook_id or has_draft else False
-        is_complete = has_draft
+            has_any_draft = check_draft_content(p.parsed_tree)
+        is_draft_done = has_any_draft or (p.notebook_id is not None)
+
+        # 2단계: 아이디어(Idea) 유무 확인 (초안이 있으면 아이디어도 완료된 것으로 간주)
+        is_idea_done = (p.master_brief is not None and len(p.master_brief.strip()) > 0) or is_draft_done
+        
+        # 1단계: 분석(Analysis) 유무 확인 (아이디어나 초안이 있으면 분석도 당연히 완료된 것)
+        is_analysis_done = (p.selected_node_ids is not None and len(p.selected_node_ids) > 0) or is_idea_done
+
+        # 4단계: 완성(Proposal Complete)
+        is_final_complete = False
 
         statuses = {
-            "analysis": is_analysis,
-            "idea_enhance": is_idea,
-            "draft_generate": is_draft,
-            "proposal_complete": is_complete
+            "analysis": is_analysis_done,
+            "idea_enhance": is_idea_done,
+            "draft_generate": is_draft_done,
+            "proposal_complete": is_final_complete
         }
         
         result.append({
@@ -520,6 +526,7 @@ async def list_projects(
             "status": statuses,
             "updatedAt": p.created_at.strftime("%Y-%m-%d")
         })
+        
     return result
 @router.get("/projects/{document_id}/export")
 async def export_project(document_id: str, db: Session = Depends(get_db)):
