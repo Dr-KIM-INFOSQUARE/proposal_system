@@ -199,18 +199,21 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [isEnhancingProposal, setIsEnhancingProposal] = useState(false);
   const [finalProposal, setFinalProposal] = useState('');
   
+  // [추가] 최초 프로젝트 로드 시 마지막 단계 자동 열기 트리거
+  const [autoOpenTriggered, setAutoOpenTriggered] = useState(false);
+
   // 트리가 입수되면 1단계를 자동으로 완료 처리
   useEffect(() => {
     if (props.initialTreeData.length > 0) {
       if (!completedSteps.includes(1)) {
-        setCompletedSteps(prev => [...prev.filter(s => s !== 1), 1]);
-        setActiveStep(1);
+        setCompletedSteps(prev => {
+          if (prev.includes(1)) return prev;
+          return [...prev, 1];
+        });
       }
     } else {
       setCompletedSteps([]);
       if (props.hasSelectedFile || props.isAnalyzing) {
-        setActiveStep(1);
-      } else if (activeStep !== 1) {
         setActiveStep(1);
       }
     }
@@ -271,6 +274,16 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       setMasterBriefData(null);
     }
   }, [props.initialMasterBrief]);
+
+  // [추가] 초기 로딩 완료 후 가장 마지막 완료 단계 열기
+  useEffect(() => {
+    if (props.documentId && !autoOpenTriggered && completedSteps.length > 0) {
+      const lastStep = Math.max(...completedSteps);
+      console.log(`[Workflow] Auto-opening last completed step: ${lastStep}`);
+      setActiveStep(lastStep);
+      setAutoOpenTriggered(true);
+    }
+  }, [props.documentId, completedSteps, autoOpenTriggered]);
 
   // 기초 아이디어 폼 초기화
   useEffect(() => {
@@ -693,25 +706,42 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             </div>
                         )}
 
-                        <button 
-                            onClick={async () => {
-                                if (!props.documentId) return;
-                                let finalMasterBriefToSave = masterBrief;
-                                if (masterBriefData) finalMasterBriefToSave = JSON.stringify(masterBriefData);
-                                const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, guideAnswers, ideaText });
-                                try {
-                                    await api.saveMasterBrief(props.documentId, finalMasterBriefToSave, initialIdeaJsonToSave);
-                                    handleStepCompletion(2);
-                                    setTimeout(() => toggleStep(3), 300);
-                                } catch(err) {
-                                    alert("저장 실패: " + err);
-                                }
-                            }}
-                            className="w-full py-4 bg-secondary text-on-secondary font-black text-sm rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-[0_12px_24px_-4px_rgba(56,107,245,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md flex items-center justify-center gap-2 transition-all mt-auto shrink-0"
-                        >
-                            <span className="material-symbols-outlined text-xl">save</span>
-                            💾 이 아이디어로 확정 및 저장
-                        </button>
+                        <div className="flex flex-col gap-3 mt-auto shrink-0">
+                            <button 
+                                onClick={() => {
+                                    if (window.confirm("현재 마스터 브리프를 삭제하고 아이디어를 다시 생성할까요?\n(수동으로 수정한 내용이 있다면 모두 손실됩니다.)")) {
+                                        setMasterBriefData(null);
+                                        setMasterBrief('');
+                                        setCompletedSteps(prev => prev.filter(s => s !== 2));
+                                    }
+                                }}
+                                className="w-full py-2.5 bg-outline-variant/10 hover:bg-error/10 text-outline hover:text-error font-bold text-[11px] rounded-xl border border-outline-variant/20 hover:border-error/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                                title="마스터 브리프를 초기화하고 왼쪽 입력란에서 다시 생성할 수 있도록 합니다."
+                            >
+                                <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                                아이디어 마스터 브리프 다시 생성 (초기화)
+                            </button>
+                            
+                            <button 
+                                onClick={async () => {
+                                    if (!props.documentId) return;
+                                    let finalMasterBriefToSave = masterBrief;
+                                    if (masterBriefData) finalMasterBriefToSave = JSON.stringify(masterBriefData);
+                                    const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, guideAnswers, ideaText });
+                                    try {
+                                        await api.saveMasterBrief(props.documentId, finalMasterBriefToSave, initialIdeaJsonToSave);
+                                        handleStepCompletion(2);
+                                        setTimeout(() => toggleStep(3), 300);
+                                    } catch(err) {
+                                        alert("저장 실패: " + err);
+                                    }
+                                }}
+                                className="w-full py-4 bg-secondary text-on-secondary font-black text-sm rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-[0_12px_24px_-4px_rgba(56,107,245,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md flex items-center justify-center gap-2 transition-all shadow-lg"
+                            >
+                                <span className="material-symbols-outlined text-xl">save</span>
+                                💾 이 아이디어로 확정 및 저장
+                            </button>
+                        </div>
                     </>
                 ) : (
                     <div className="flex-1 w-full h-full bg-surface-container-lowest border border-outline-variant/30 border-dashed rounded-xl flex items-center justify-center p-8 text-center shadow-inner">
@@ -928,9 +958,25 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
              {draftTree.length > 0 && !isGeneratingDraft && (
                 <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between">
-                   <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
-                      <span className="material-symbols-outlined text-sm">info</span>
-                      수정 사항은 브라우저 세션에 임시 보관 중입니다.
+                   <div className="flex items-center gap-4">
+                       <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
+                          <span className="material-symbols-outlined text-sm">info</span>
+                          수정 사항은 브라우저 세션에 임시 보관 중입니다.
+                       </div>
+                       <button 
+                           onClick={() => {
+                               if (window.confirm("초안 생성을 처음부터 다시 시작할까요?\n(수동으로 편집한 내용은 모두 삭제됩니다.)")) {
+                                   setDraftTree([]);
+                                   setSelectedNodeId(null);
+                                   setCompletedSteps(prev => (prev || []).filter(s => s !== 3));
+                               }
+                           }}
+                           className="flex items-center gap-1.5 px-3 py-1.5 bg-outline-variant/10 hover:bg-error/10 text-[11px] font-bold text-outline hover:text-error rounded-lg transition-all border border-outline-variant/20 hover:border-error/20 cursor-pointer"
+                           title="리서치 모드 선택 화면으로 돌아가서 다시 생성합니다."
+                       >
+                           <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                           처음부터 다시 시작
+                       </button>
                    </div>
                    <button 
                        onClick={async () => {
