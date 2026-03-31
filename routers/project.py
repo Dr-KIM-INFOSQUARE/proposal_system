@@ -1,16 +1,21 @@
 import os
 import uuid
 import shutil
+import json
+import asyncio
+import traceback
+from datetime import datetime, timedelta
+from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from fastapi.responses import StreamingResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
-from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest
+from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest
 from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
-import json
-import asyncio
+from services.notebooklm_service import notebooklm_service
 
 router = APIRouter(prefix="/api", tags=["Projects"])
 
@@ -440,24 +445,78 @@ async def save_idea(document_id: str, request: IdeaSaveRequest, db: Session = De
     
     return {"status": "success", "message": "아이디어가 성공적으로 저장되었습니다."}
 
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+from datetime import datetime, timedelta
+from sqlalchemy import or_
+
 @router.get("/projects")
-async def list_projects(db: Session = Depends(get_db)):
-    """저장된 모든 프로젝트 목록을 반환합니다."""
-    projects = db.query(Project).order_by(Project.created_at.desc()).all()
+async def list_projects(
+    keyword: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """검색 및 기간 필터를 적용하여 저장된 프로젝트 목록을 반환합니다."""
+    query = db.query(Project)
+    
+    # 키워드 검색 (프로젝트명 또는 원본 파일명)
+    if keyword:
+        query = query.filter(
+            or_(
+                Project.name.ilike(f"%{keyword}%"),
+                Project.filename.ilike(f"%{keyword}%")
+            )
+        )
+    
+    # 기간 검색 (생성일 기준)
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            query = query.filter(Project.created_at >= start_dt)
+        except ValueError:
+            pass
+            
+    if end_date:
+        try:
+            # 종료일의 경우 해당 날짜의 23:59:59까지 포함하도록 처리
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1) - timedelta(seconds=1)
+            query = query.filter(Project.created_at <= end_dt)
+        except ValueError:
+            pass
+            
+    projects = query.order_by(Project.created_at.desc()).all()
     
     result = []
     for p in projects:
+        # (기존 4단계 상태 판별 로직 유지)
+        is_analysis = True if p.selected_node_ids and len(p.selected_node_ids) > 0 else False
+        is_idea = True if p.master_brief and len(p.master_brief.strip()) > 0 else False
+        
+        has_draft = False
+        if p.parsed_tree:
+            def check_draft(nodes):
+                for n in nodes:
+                    if n.get("draft_content"): return True
+                    if n.get("children") and check_draft(n["children"]): return True
+                return False
+            has_draft = check_draft(p.parsed_tree)
+            
+        is_draft = True if p.notebook_id or has_draft else False
+        is_complete = has_draft
+
         statuses = {
-            "analysis": True if p.selected_node_ids else False,
-            "idea_enhance": True if p.master_brief else False,
-            "proposal_write": False # TODO: 추후 결과물 컬럼 추가 시 변경
+            "analysis": is_analysis,
+            "idea_enhance": is_idea,
+            "draft_generate": is_draft,
+            "proposal_complete": is_complete
         }
         
         result.append({
             "id": str(p.id),
             "document_id": p.document_id,
-            "name": p.name or p.filename, # 프로젝트 별칭 우선
-            "filename": p.filename, # 원본 파일명
+            "name": p.name or p.filename,
+            "filename": p.filename,
             "status": statuses,
             "updatedAt": p.created_at.strftime("%Y-%m-%d")
         })
@@ -579,6 +638,81 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
         "initial_idea": getattr(project, "initial_idea", None),
         "pdf_url": f"/uploads/{document_id}.pdf"
     }
+
+
+@router.post("/projects/{document_id}/draft/generate")
+async def generate_draft_stream(
+    document_id: str, 
+    request: DraftGenerateRequest,
+    db: Session = Depends(get_db)
+):
+    """5단계 파이프라인(NotebookLM)을 통해 초안을 자동 생성하고 SSE 스트림을 반환합니다."""
+    print(f"[BACKEND] API Request: Generate draft for {document_id}")
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        print(f"[BACKEND] ERROR: Project not found: {document_id}")
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    master_brief = project.master_brief
+    if not master_brief:
+        print(f"[BACKEND] ERROR: Master brief missing for {document_id}")
+        raise HTTPException(status_code=400, detail="Master brief is required. Please complete Step 2 first.")
+        
+    # PDF 경로 확인 (양식 가이드용)
+    pdf_path = os.path.join(UPLOAD_DIR, f"{document_id}.pdf")
+    if not os.path.exists(pdf_path):
+        print(f"[BACKEND] WARNING: Template PDF missing: {pdf_path}")
+        pdf_path = None
+        
+    # 트리 데이터 준비
+    try:
+        print(f"[BACKEND] Preparing document tree...")
+        export_data = await export_project(document_id, db)
+        document_tree = export_data.get("export_data", [])
+        print(f"[BACKEND] Document tree prepared (nodes: {len(document_tree)})")
+    except Exception as e:
+        print(f"[BACKEND] WARNING: export_project failed: {e}. Using raw parsed_tree.")
+        document_tree = project.parsed_tree or []
+
+    async def event_generator():
+        print(f"[BACKEND] SSE event_generator started for {document_id}")
+        try:
+            # NotebookLMService를 통해 5단계 파이프라인 실행
+            async for progress in notebooklm_service.generate_draft_stream(
+                document_id=document_id,
+                master_brief=master_brief,
+                document_tree=document_tree,
+                pdf_path=pdf_path,
+                research_mode=request.research_mode,
+                project_name=project.name,
+                existing_notebook_id=project.notebook_id
+            ):
+                print(f"[BACKEND] SSE Yielding progress: {progress[:100]}")
+                data = json.loads(progress)
+                
+                # notebook_id가 반환되면 즉시 DB에 저장 (중간 중단 대비)
+                if data.get("notebook_id") and data.get("notebook_id") != project.notebook_id:
+                    print(f"[BACKEND] New notebook_id discovered: {data.get('notebook_id')}. Saving to DB.")
+                    project.notebook_id = data.get("notebook_id")
+                    db.commit()
+
+                # 성공적으로 완료된 경우 DB에 트리 업데이트
+                if data.get("status") == "completed":
+                    final_tree = data.get("tree")
+                    if final_tree:
+                        print(f"[BACKEND] Draft generation completed. Saving final tree to DB.")
+                        project.parsed_tree = final_tree
+                        db.commit()
+                
+                yield f"data: {progress}\n\n"
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            print(f"[BACKEND] SSE FATAL ERROR: {str(e)}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+        finally:
+            print(f"[BACKEND] SSE event_generator closed for {document_id}")
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.delete("/projects/{document_id}")

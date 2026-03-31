@@ -1,0 +1,333 @@
+import os
+import json
+import asyncio
+import subprocess
+import tempfile
+import time
+import shutil
+import sys
+import re
+from datetime import datetime
+from typing import AsyncGenerator, List, Dict, Any, Optional
+
+class NotebookLMService:
+    def __init__(self, timeout: int = 600):
+        self.timeout = timeout
+        # Windows에서는 nlm.cmd 또는 nlm.exe를 찾아야 하며, shutil.which를 사용해 절대 경로를 정적으로 미리 찾음
+        self.nlm_cmd = self._find_nlm_executable()
+        print(f"[NOTEBOOKLM_SERVICE] Initialized. NLM executable: {self.nlm_cmd}")
+
+    def _find_nlm_executable(self) -> str:
+        """현재 시스템에서 nlm 실행 파일의 절대 경로를 찾습니다."""
+        possible_names = ["nlm"]
+        if sys.platform == "win32":
+            possible_names = ["nlm.cmd", "nlm.exe", "nlm"]
+            
+        for name in possible_names:
+            path = shutil.which(name)
+            if path:
+                return path
+        return "nlm" # 기본값 (PATH에 있을 것으로 기대)
+
+    async def _run_command(self, args: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+        """nlm CLI 명령어를 실행하고 결과를 반환합니다."""
+        cmd = [self.nlm_cmd] + args
+        
+        try:
+            print(f"[NOTEBOOKLM_SERVICE] Executing command: {' '.join(cmd)}")
+            
+            # Windows에서 asyncio.create_subprocess_shell의 NotImplementedError 이슈를 
+            # 근본적으로 해결하기 위해 subprocess.run을 asyncio.to_thread로 실행합니다.
+            def sync_run():
+                # Windows 인코딩 에러(cp949) 방지를 위한 환경 변수 설정
+                current_env = os.environ.copy()
+                current_env["PYTHONIOENCODING"] = "utf-8"
+                current_env["PYTHONUTF8"] = "1"
+                
+                return subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore',
+                    env=current_env,
+                    shell=(sys.platform == "win32"),
+                    timeout=timeout or self.timeout
+                )
+
+            # 별도 스레드에서 차단 없이 실행
+            result = await asyncio.to_thread(sync_run)
+            output = result.stdout + "\n" + result.stderr
+            
+            if result.returncode != 0:
+                print(f"[NOTEBOOKLM_SERVICE] ERROR (Code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                raise Exception(f"NLM Error (Code {result.returncode}): {result.stderr or result.stdout}")
+            
+            print(f"[NOTEBOOKLM_SERVICE] SUCCESS. Response: {output[:100]}...")
+            
+            # --- ID 추출 로직 ---
+            # 1. Notebook ID: "ID: [UUID]" 형식을 먼저 찾음
+            id_match = re.search(r"ID:\s*([a-fA-F0-9-]{36})", output)
+            nb_id = id_match.group(1) if id_match else None
+            
+            # 2. Task ID: "Task ID: [UUID]" 또는 "Task: [UUID]" 형식을 먼저 찾음
+            task_id = None
+            task_match = re.search(r"(?:Task\s*ID|Task):\s*([a-fA-F0-9-]{36})", output, re.IGNORECASE)
+            if task_match:
+                task_id = task_match.group(1)
+            else:
+                # 만약 Task ID 접두사가 없는데 36자 ID가 있고, 그게 Notebook ID와 다르다면 Task ID로 추정
+                all_uuids = re.findall(r"([a-fA-F0-9-]{36})", output)
+                unique_uuids = [u for u in all_uuids if u != nb_id]
+                if unique_uuids:
+                    task_id = unique_uuids[0]
+
+            res_dict = {"status": "success", "output": output}
+            if nb_id:
+                res_dict["id"] = nb_id
+            if task_id:
+                res_dict["task_id"] = task_id
+                
+            return res_dict
+            
+        except subprocess.TimeoutExpired:
+            print(f"[NOTEBOOKLM_SERVICE] TIMEOUT ERROR")
+            raise Exception(f"Command timed out: {' '.join(cmd)}")
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"[NOTEBOOKLM_SERVICE] EXCEPTION: {error_trace}")
+            raise Exception(f"Failed to execute NLM command: {str(e)} | Details: {type(e).__name__}")
+
+    async def generate_draft_stream(self, document_id: str, master_brief: str, document_tree: List[Dict[str, Any]], pdf_path: Optional[str] = None, research_mode: str = "deep", project_name: Optional[str] = None, existing_notebook_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """5단계 파이프라인을 스트리밍 방식으로 실행합니다."""
+        print(f"[NOTEBOOKLM_SERVICE] Starting draft stream for document: {document_id}")
+        notebook_id = None
+        
+        try:
+            # Phase 1: Setup (또는 기존 노트북 확인)
+            if existing_notebook_id:
+                notebook_id = existing_notebook_id
+                print(f"[NOTEBOOKLM_SERVICE] Phase 1 - Reusing existing notebook: {notebook_id}")
+                yield json.dumps({"phase": 1, "status": "Phase 1: 기존 노트북 재사용 중..."})
+            else:
+                timestamp = datetime.now().strftime("%H%M%S")
+                safe_project_name = project_name.replace(" ", "_").replace("'", "").replace("\"", "") if project_name else document_id
+                notebook_title = f"Draft_{safe_project_name}_{timestamp}"
+                
+                print(f"[NOTEBOOKLM_SERVICE] Phase 1 - Setting up notebook: {notebook_title}")
+                yield json.dumps({"phase": 1, "status": "Phase 1: 노트북 생성 및 소스 업로드 중..."})
+                create_res = await self._run_command(["notebook", "create", notebook_title])
+                notebook_id = create_res.get("id")
+                if not notebook_id:
+                    # create_res["id"]가 없을 경우 output에서 다시 한번 시도
+                    match = re.search(r"ID:\s*([a-fA-F0-9-]{36})", create_res.get("output", ""))
+                    if match:
+                        notebook_id = match.group(1)
+                    else:
+                        raise Exception(f"노트북 생성 실패: ID를 찾을 수 없습니다. (출력: {create_res.get('output')})")
+                
+                print(f"[NOTEBOOKLM_SERVICE] Notebook created successfully: {notebook_id}")
+                
+                # 마스터 브리프 및 템플릿 파일 업로드 (기온 노트북이 아닐 때만 실행)
+                # 마스터 브리프 임시 파일 생성
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp_brief:
+                    tmp_brief.write(master_brief)
+                    brief_path = tmp_brief.name
+                
+                try:
+                    # 소스 추가 (마스터 브리프)
+                    print(f"[NOTEBOOKLM_SERVICE] Adding source: Master Brief")
+                    await self._run_command(["source", "add", notebook_id, "--file", brief_path, "--wait"])
+                    
+                    # 소스 추가 (양식 PDF - 존재 시)
+                    if pdf_path and os.path.exists(pdf_path):
+                        print(f"[NOTEBOOKLM_SERVICE] Adding source: Template PDF")
+                        await self._run_command(["source", "add", notebook_id, "--file", pdf_path, "--wait"])
+                finally:
+                    if os.path.exists(brief_path):
+                        os.remove(brief_path)
+
+            # Phase 2: Optimize Query
+            print(f"[NOTEBOOKLM_SERVICE] Phase 2 - Optimizing search query")
+            yield json.dumps({"phase": 2, "status": "Phase 2: 최적의 리서치 쿼리 생성 중..."})
+            # 태그를 사용하도록 유도하여 파싱 안정성 확보
+            opt_query_prompt = (
+                "업로드된 사업계획서 양식과 사업 아이디어를 완벽하게 뒷받침할 객관적이고 균형 잡힌 "
+                "근거 자료(시장/기술/정책)를 찾기 위해, Deep Research에 입력할 가장 완벽한 '검색용 프롬프트' 1개만 작성해 줘. "
+                "반드시 [SEARCH_QUERY]태그 사이에 검색어만 넣어줘."
+            )
+            query_res = await self._run_command(["notebook", "query", notebook_id, opt_query_prompt])
+            
+            raw_output = query_res.get("output", "").strip()
+            optimal_query = ""
+            
+            # 1. [SEARCH_QUERY] 태그 추출 시도
+            tag_match = re.search(r"\[SEARCH_QUERY\](.*?)\[/SEARCH_QUERY\]", raw_output, re.DOTALL)
+            if tag_match:
+                optimal_query = tag_match.group(1).strip()
+            
+            # 2. 실패 시 "입력용 프롬프트" 이후 내용 추출 시도 (기존 답변 형식 대응)
+            if not optimal_query:
+                keyword_match = re.search(r"입력용 프롬프트\]\*\*\s*[\n\r]*(.*?)[\n\r]*(\*\*\*|###|$)", raw_output, re.DOTALL)
+                if keyword_match:
+                    optimal_query = keyword_match.group(1).strip()
+            
+            # 3. 실패 시 JSON 파싱 시도 (NotebookLM이 JSON으로 답하는 경우 대비)
+            if not optimal_query:
+                try:
+                    json_match = re.search(r"(\{.*\})", raw_output, re.DOTALL)
+                    if json_match:
+                        json_data = json.loads(json_match.group(1))
+                        val = json_data.get("value", {})
+                        if isinstance(val, dict):
+                            optimal_query = val.get("answer", raw_output)
+                        else:
+                            optimal_query = raw_output
+                    else:
+                        optimal_query = raw_output
+                except:
+                    optimal_query = raw_output
+            
+            # 4. 정리: 너무 길면 명령행 에러가 날 수 있으므로 요약/절삭하고 특수문자 정제
+            # 줄바꿈 제거, 따옴표 치환, 길이 제한(1000자)
+            optimal_query = optimal_query.replace("\n", " ").replace('"', "'").strip()
+            if len(optimal_query) > 1000:
+                optimal_query = optimal_query[:1000] + "..."
+            
+            if not optimal_query:
+                optimal_query = f"{document_id} 사업계획서 시장 및 기술 분석" # 폴백 쿼리
+            
+            print(f"[NOTEBOOKLM_SERVICE] Optimized query: {optimal_query[:50]}...")
+            
+            # Phase 3: Deep Research
+            print(f"[NOTEBOOKLM_SERVICE] Phase 3 - Starting {research_mode} research")
+            yield json.dumps({"phase": 3, "status": f"Phase 3: {research_mode.capitalize()} Research 시작 ('{optimal_query[:30]}...')"})
+            research_start = await self._run_command(["research", "start", optimal_query, "--notebook-id", notebook_id, "--mode", research_mode])
+            task_id = research_start.get("task_id")
+            
+            # Polling research status
+            max_polls = 20 # 약 10분
+            poll_count = 0
+            while poll_count < max_polls:
+                await asyncio.sleep(30)
+                poll_count += 1
+                # status 확인 시에는 JSON 대신 텍스트에서 'Completed' 키워드를 찾음
+                status_res = await self._run_command(["research", "status", notebook_id])
+                
+                output_lower = status_res.get("output", "").lower()
+                print(f"[NOTEBOOKLM_SERVICE] Research status check (poll {poll_count})")
+                
+                if "completed" in output_lower or "finish" in output_lower or "finish" in status_res.get("output", ""):
+                    yield json.dumps({"phase": 3, "status": "Phase 3: 리서치 완료. 소스 반입 시작..."})
+                    
+                    # Backend 동기화 대기 (약간의 여유)
+                    await asyncio.sleep(5)
+                    
+                    # research status에서 나온 task_id가 존재할 경우 우선 사용, 아니면 시작 시점의 task_id 사용
+                    final_task_id = status_res.get("task_id") or task_id
+                    
+                    try:
+                        if final_task_id and final_task_id != "latest":
+                            print(f"[NOTEBOOKLM_SERVICE] Importing research (ID: {final_task_id})")
+                            await self._run_command(["research", "import", notebook_id, "--task-id", final_task_id])
+                        else:
+                            print(f"[NOTEBOOKLM_SERVICE] Importing research (latest)")
+                            await self._run_command(["research", "import", notebook_id]) # 'latest'는 보통 인자 생략 시 동작
+                    except Exception as import_err:
+                        print(f"[NOTEBOOKLM_SERVICE] Import failed, trying fallback: {str(import_err)}")
+                        # fallback: 인자 없이 호출하여 가장 최근 리서치 반입 시도
+                        try:
+                            await self._run_command(["research", "import", notebook_id])
+                        except:
+                            print("[NOTEBOOKLM_SERVICE] Fallback import also failed.")
+                        
+                    break
+                else:
+                    yield json.dumps({"phase": 3, "status": f"Phase 3: 리서치 진행 중 ({poll_count * 30}초 경과...)"})
+            
+            # Phase 4: Persona & Rules
+            print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring expert persona")
+            yield json.dumps({"phase": 4, "status": "Phase 4: 작성 전문가 페르소나 주입 중..."})
+            persona_prompt = (
+                "너는 지금부터 정부지원사업 수석 컨설턴트야. 앞으로 내가 특정 목차를 주면, 오직 업로드된 사업 아이디어와 "
+                "검색된 소스만을 기반으로 사업계획서 초안을 작성해. "
+                "**[🚨절대 규칙🚨] 모든 문장은 명사형(음, 함, 됨 등)으로 끝맺고, 글머리기호(Bullet points)를 "
+                "적용하여 가독성을 극대화해라.**"
+            )
+            await self._run_command(["notebook", "query", notebook_id, persona_prompt])
+
+            # Phase 5: Recursive Drafting
+            print(f"[NOTEBOOKLM_SERVICE] Phase 5 - Generating content sections")
+            yield json.dumps({"phase": 5, "status": "Phase 5: 섹션별 순회 초안 작성 시작..."})
+            
+            async def write_sections_recursive(nodes):
+                for node in nodes:
+                    if node.get("content") is True:
+                        title = node.get("title", "Unknown Section")
+                        writing_guide = node.get("writingGuide")
+                        user_instruction = node.get("userInstruction")
+                        table_metadata = node.get("tableMetadata")
+                        node_type = node.get("type")
+
+                        print(f"[NOTEBOOKLM_SERVICE] Drafting section: {title}")
+                        yield json.dumps({"phase": 5, "status": f"작성 중: {title}"})
+                        
+                        # [쿼리 문자열 생성 동적 로직]
+                        prompt_parts = [f"작성할 목차: [{title}]\n"]
+                        
+                        if writing_guide and str(writing_guide).strip():
+                            prompt_parts.append(f"- 양식 작성 가이드: {writing_guide}\n(위 가이드라인의 의도를 완벽하게 충족하도록 작성할 것.)\n")
+                            
+                        if user_instruction and str(user_instruction).strip():
+                            prompt_parts.append(f"- 사용자 추가 지시사항: {user_instruction}\n(이 내용을 우선적으로 반영할 것.)\n")
+                            
+                        if node_type == "table" and table_metadata:
+                            metadata_str = json.dumps(table_metadata, ensure_ascii=False)
+                            prompt_parts.append(f"- 이 항목은 표(Table)로 작성되어야 해. 다음 구조를 참고하여 반드시 **Markdown 표 형식**으로 출력해 줘.\n  [표 구조]: {metadata_str}\n")
+                        
+                        prompt_parts.append("지금까지의 규칙을 엄수하여 위 내용을 구체적인 수치와 근거를 포함하여 작성해 줘.")
+                        
+                        final_prompt = "".join(prompt_parts)
+                        
+                        # CLI 호출 전 약간의 대기 (API 부하 분산)
+                        await asyncio.sleep(2)
+                        
+                        node_res = await self._run_command(["notebook", "query", notebook_id, final_prompt])
+                        
+                        # 결과에서 answer만 추출 시도
+                        raw_ans = node_res.get("output", "").strip()
+                        try:
+                            json_match = re.search(r"(\{.*\})", raw_ans, re.DOTALL)
+                            if json_match:
+                                ans_json = json.loads(json_match.group(1))
+                                if "value" in ans_json and isinstance(ans_json["value"], dict):
+                                    node["draft_content"] = ans_json["value"].get("answer", raw_ans)
+                                else:
+                                    node["draft_content"] = raw_ans
+                            else:
+                                node["draft_content"] = raw_ans
+                        except:
+                            node["draft_content"] = raw_ans
+                            
+                    # 자식 노드 탐색 (content 여부와 관계없이 재귀)
+                    if "children" in node and node["children"]:
+                        async for prog in write_sections_recursive(node["children"]):
+                            yield prog
+
+            # 전체 트리 순회 시작
+            async for p in write_sections_recursive(document_tree):
+                yield p
+
+            # Final response
+            print(f"[NOTEBOOKLM_SERVICE] Draft generation completed successfully")
+            yield json.dumps({"status": "completed", "tree": document_tree, "notebook_id": notebook_id})
+
+        except Exception as e:
+            import traceback
+            print(f"[NOTEBOOKLM_SERVICE] FATAL ERROR: {str(e)}")
+            print(traceback.format_exc())
+            yield json.dumps({"status": "error", "message": str(e)})
+
+# 싱글톤 인스턴스
+notebooklm_service = NotebookLMService()

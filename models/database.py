@@ -29,6 +29,7 @@ class Project(Base):
     parsed_tree = Column(JSON, default=list)
     master_brief = Column(String, nullable=True) # 아이디어 고도화 결과 저장 (Master Brief)
     initial_idea = Column(String, nullable=True) # 자유입력/가이드입력 탭 상태 보존
+    notebook_id = Column(String, nullable=True) # 생성된 NotebookLM ID 기록
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"

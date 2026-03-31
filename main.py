@@ -1,8 +1,14 @@
 import os
+import sys
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routers import project
+
+# Windows 환경에서 subprocess 기능을 위해 ProactorEventLoop를 강제로 설정합니다. (NotImplementedError 해결)
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 app = FastAPI(
     title="PlanWeaver AI API",

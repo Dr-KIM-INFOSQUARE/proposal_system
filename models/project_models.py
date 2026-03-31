@@ -21,3 +21,8 @@ class IdeaSaveRequest(BaseModel):
     document_id: str
     master_brief: str
     initial_idea: Optional[str] = None
+
+class DraftGenerateRequest(BaseModel):
+    document_id: str
+    model_id: Optional[str] = "models/gemini-3.1-pro-preview" # 기본 모델 설정
+    research_mode: str = "deep" # fast | deep

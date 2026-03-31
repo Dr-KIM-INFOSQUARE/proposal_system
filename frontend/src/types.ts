@@ -8,5 +8,12 @@ export interface DocumentNode {
   writingGuide?: string | null;
   userInstruction?: string | null;
   tableMetadata?: string | null;
+  content?: boolean;
+  draft_content?: string | null;
   children?: DocumentNode[];
+}
+export interface DraftGenerateRequest {
+  documentId: string;
+  modelId?: string;
+  researchMode?: 'fast' | 'deep';
 }

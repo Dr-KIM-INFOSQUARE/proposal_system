@@ -191,24 +191,28 @@ export const BillingView: React.FC = () => {
     let startTime = startDate ? new Date(startDate) : new Date(firstLogTime);
     let endTime = endDate ? new Date(endDate) : new Date();
 
-    // 보기 편하게 기간 보정 (단 한 개만 나오지 않도록)
+    // 보기 편하게 기간 보정 (로딩 시 초기 데이터 범위 - 길게 잡아서 스크롤 가능하게 함)
     if (!startDate && !endDate) {
        switch(timeUnit) {
-         case 'hour': // 최근 24시간
+         case 'hour': // 72시간 백업
            startTime = new Date();
-           startTime.setHours(startTime.getHours() - 24);
+           startTime.setHours(startTime.getHours() - 72);
            break;
-         case 'day': // 최근 14일
+         case 'day': // 최근 60일
            startTime = new Date();
-           startTime.setDate(startTime.getDate() - 14);
+           startTime.setDate(startTime.getDate() - 60);
            break;
-         case 'month': // 올해 전체
-           startTime = new Date(new Date().getFullYear(), 0, 1);
-           endTime = new Date(new Date().getFullYear(), 11, 31);
-           break;
-         case 'quarter': // 최근 2년
+         case 'month': // 최근 24개월
            startTime = new Date();
-           startTime.setFullYear(startTime.getFullYear() - 2);
+           startTime.setMonth(startTime.getMonth() - 24);
+           break;
+         case 'quarter': // 최근 4년
+           startTime = new Date();
+           startTime.setFullYear(startTime.getFullYear() - 4);
+           break;
+         case 'year': // 최근 10년
+           startTime = new Date();
+           startTime.setFullYear(startTime.getFullYear() - 10);
            break;
        }
     }
@@ -220,27 +224,46 @@ export const BillingView: React.FC = () => {
     const result: { name: string; cost: number; calls: number; inCost: number; outCost: number }[] = [];
     const current = new Date(startTime);
 
-    // 루프 안전 장치 (만기일 또는 최대 2000개 데이터 포인트)
-    const safetyLimitDate = new Date(endTime);
-    safetyLimitDate.setDate(safetyLimitDate.getDate() + 1);
+    // 각 단위별로 정확한 '현재 범위'의 끝을 계산 (미래 시간 그래프 생성 방지)
+    const endCompare = new Date(endTime);
+    if (timeUnit === 'hour') {
+      endCompare.setMinutes(59, 59, 999);
+    } else if (timeUnit === 'day') {
+      endCompare.setHours(23, 59, 59, 999);
+    } else if (timeUnit === 'month') {
+      endCompare.setMonth(endCompare.getMonth() + 1, 0);
+      endCompare.setHours(23, 59, 59, 999);
+    } else if (timeUnit === 'quarter') {
+      const q = Math.floor(endCompare.getMonth() / 3);
+      endCompare.setMonth((q + 1) * 3, 0);
+      endCompare.setHours(23, 59, 59, 999);
+    } else if (timeUnit === 'year') {
+      endCompare.setMonth(11, 31);
+      endCompare.setHours(23, 59, 59, 999);
+    }
 
-    while (current <= safetyLimitDate) {
+    const toLocalFormat = (d: Date) => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+
+    while (current <= endCompare) {
       let key = "";
       let label = "";
       
       switch(timeUnit) {
         case 'hour':
-          key = current.toISOString().substring(0, 13).replace('T', ' ') + ":00";
+          key = toLocalFormat(current).substring(0, 13) + ":00";
           label = `${current.getHours()}시`;
           current.setHours(current.getHours() + 1);
           break;
         case 'day':
-          key = current.toISOString().substring(0, 10);
+          key = toLocalFormat(current).substring(0, 10);
           label = `${current.getMonth()+1}/${current.getDate()}`;
           current.setDate(current.getDate() + 1);
           break;
         case 'month':
-          key = current.toISOString().substring(0, 7);
+          key = toLocalFormat(current).substring(0, 7);
           label = `${current.getMonth()+1}월`;
           current.setMonth(current.getMonth() + 1);
           break;
@@ -575,16 +598,27 @@ export const BillingView: React.FC = () => {
                           dot={{ r: 4, fill: '#386BF5', strokeWidth: 2, stroke: '#fff' }}
                           activeDot={{ r: 6, strokeWidth: 0 }}
                        />
-                       {chartData.length > 10 && (
-                        <Brush 
-                          dataKey="name" 
-                          height={20} 
-                          stroke="#386BF5" 
-                          fill="#191C1E"
-                          travellerWidth={10}
-                          startIndex={Math.max(0, chartData.length - 30)}
-                        />
-                      )}
+                       {(() => {
+                          let defaultVisibleCount = 12;
+                          if (timeUnit === 'day') defaultVisibleCount = 14;
+                          else if (timeUnit === 'month') defaultVisibleCount = 12;
+                          else if (timeUnit === 'quarter') defaultVisibleCount = 8;
+                          else if (timeUnit === 'year') defaultVisibleCount = 5;
+                          
+                          if (chartData.length > defaultVisibleCount) {
+                            return (
+                              <Brush 
+                                dataKey="name" 
+                                height={20} 
+                                stroke="#386BF5" 
+                                fill="#191C1E"
+                                travellerWidth={10}
+                                startIndex={Math.max(0, chartData.length - defaultVisibleCount)}
+                              />
+                            );
+                          }
+                          return null;
+                       })()}
                     </ComposedChart>
                 </ResponsiveContainer>
              ) : (

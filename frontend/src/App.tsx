@@ -32,9 +32,9 @@ function App() {
       loadProjects();
   }, [activeView]);
 
-  const loadProjects = async () => {
+  const loadProjects = async (keyword?: string, startDate?: string, endDate?: string) => {
       try {
-          const list = await api.getProjects();
+          const list = await api.getProjects(keyword, startDate, endDate);
           setProjectList(list);
       } catch (err) {
           console.error("Failed to load projects", err);
@@ -292,6 +292,7 @@ function App() {
                 onOpenProject={handleOpenProject} 
                 onDeleteProject={handleDeleteProject}
                 onRename={handleRename}
+                onSearch={(k, s, e) => loadProjects(k, s, e)}
                 projects={projectList}
              />
           </div>

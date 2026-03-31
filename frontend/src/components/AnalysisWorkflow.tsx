@@ -72,9 +72,96 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [isEnhancing, setIsEnhancing] = useState(false);
   
   // Step 3 UI States
-  const [isCollectingData, setIsCollectingData] = useState(false);
-  const [collectedDraft, setCollectedDraft] = useState('');
-  
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [draftLogs, setDraftLogs] = useState<string[]>([]);
+  const [draftTree, setDraftTree] = useState<DocumentNode[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
+  const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
+
+  // 초안 생성 실행 (SSE)
+  const handleGenerateDraft = async () => {
+    if (!props.documentId) {
+      alert("프로젝트가 아직 저장되지 않았거나 ID를 찾을 수 없습니다. 다시 시도하거나 프로젝트를 저장해 주세요.");
+      return;
+    }
+    
+    // 즉각적인 UI 피드백을 위해 상태 먼저 설정
+    console.log("[Workflow] Starting draft generation. Mode:", researchMode);
+    setIsGeneratingDraft(true);
+    setDraftTree([]);
+    
+    // 헤더 프로그레스 바 활성화
+    if (props.onEnhanceStateChange) {
+        props.onEnhanceStateChange(true, "초안 생성 초기화 중...");
+    }
+
+    try {
+      const finalTree = await api.generateDraftStream(
+        props.documentId, 
+        props.selectedModel,
+        researchMode,
+        (msg) => {
+          // 헤더 텍스트 실시간 업데이트
+          if (props.onEnhanceStateChange) {
+              props.onEnhanceStateChange(true, msg);
+          }
+          setDraftLogs(prev => [...prev, `> ${msg}`]);
+        }
+      );
+
+      if (finalTree) {
+        setDraftTree(finalTree);
+        if (props.onEnhanceStateChange) {
+            props.onEnhanceStateChange(false, "초안 작성이 완료되었습니다.");
+        }
+        const firstDraftNode = findFirstContentNode(finalTree);
+        if (firstDraftNode) setSelectedNodeId(firstDraftNode.id);
+      }
+    } catch (err) {
+      console.error("[Workflow] Draft generation failed:", err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (props.onEnhanceStateChange) {
+          props.onEnhanceStateChange(false);
+      }
+      alert("초안 생성 중 오류가 발생했습니다: " + errorMsg);
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  // 트리에서 첫 번째 컨텐츠 노드 찾기
+  const findFirstContentNode = (nodes: DocumentNode[]): DocumentNode | null => {
+    for (const node of nodes) {
+      if (node.content && node.draft_content) return node;
+      if (node.children) {
+        const found = findFirstContentNode(node.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // 특정 노드 찾기 및 업데이트
+  const findAndUpdateNode = (nodes: DocumentNode[], id: string | number, content: string): DocumentNode[] => {
+    return nodes.map(node => {
+      if (node.id === id) return { ...node, draft_content: content };
+      if (node.children) return { ...node, children: findAndUpdateNode(node.children, id, content) };
+      return node;
+    });
+  };
+
+  const selectedNode = selectedNodeId ? (function find(nodes: DocumentNode[]): DocumentNode | undefined {
+    for (const n of nodes) {
+      if (n.id === selectedNodeId) return n;
+      if (n.children) {
+        const found = find(n.children);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  })(draftTree) : undefined;
+
   // Step 4 UI States
   const [isEnhancingProposal, setIsEnhancingProposal] = useState(false);
   const [finalProposal, setFinalProposal] = useState('');
@@ -569,61 +656,213 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
            onToggle={() => toggleStep(3)}
            isDisabled={isStepDisabled(3)}
         >
-          <div className="p-6 md:p-8 flex flex-col gap-6 bg-surface-container-lowest/50">
-             <div className="flex flex-col gap-2">
+          <div className="flex flex-col bg-surface-container-lowest/50 min-h-[400px]">
+             {/* 헤더 안내문 */}
+             <div className="p-6 border-b border-outline-variant/10">
                  <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
                      <span className="material-symbols-outlined text-primary">auto_stories</span>
                      NotebookLM 기반 팩트 수집 및 초안 생성
                  </h4>
-                 <p className="text-sm text-outline leading-relaxed break-keep">
-                     입력된 사업 아이디어(마스터 브리프)를 바탕으로, 가상의 NotebookLM 지식 베이스 문헌 및 웹 검색 데이터를 조합하여 각 목차별 객관적 근거를 수집하고 초안 텍스트를 작성합니다.
+                 <p className="text-xs text-outline leading-relaxed mt-1">
+                     실시간 검색 데이터와 마스터 브리프를 조합하여 목차별 근거 중심 초안을 생성합니다.
                  </p>
              </div>
 
-             {!collectedDraft ? (
-                 <div className="flex flex-col items-center justify-center py-10 gap-4 border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-lowest shadow-inner">
-                     <div className="w-16 h-16 bg-primary/5 rounded-full flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-primary opacity-60">database</span>
-                     </div>
-                     <button 
-                         onClick={() => {
-                             setIsCollectingData(true);
-                             // 임시 모의 로직 (2초 후 완료)
-                             setTimeout(() => {
-                                 setIsCollectingData(false);
-                                 setCollectedDraft("1. 기술개발의 필요성\\n본 스마트 비전 시스템은 기존 작업자의 수작업으로 이루어지던...\\n(💡 수집된 객관적 지표와 팩트 기반의 초안 데이터가 여기에 표시됩니다.)");
-                                 handleStepCompletion(3);
-                                 setTimeout(() => toggleStep(4), 500);
-                             }, 2000);
-                         }}
-                         disabled={isCollectingData}
-                         className="px-8 py-3.5 bg-primary text-white text-sm font-bold rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:translate-y-0"
-                     >
-                         {isCollectingData ? (
-                             <><span className="material-symbols-outlined text-xl animate-spin">refresh</span> 데이터 수집 및 초안 생성 중...</>
-                         ) : (
-                             <><span className="material-symbols-outlined text-xl">magic_button</span> ✨ 데이터 수집 및 초안 생성</>
-                         )}
-                     </button>
-                 </div>
-             ) : (
-                 <div className="flex flex-col gap-4 animate-fade-in">
-                     <div className="bg-surface border border-outline-variant/20 rounded-xl p-5 shadow-sm">
-                         <div className="flex justify-between items-center mb-4">
-                             <div className="text-sm font-black text-primary flex items-center gap-2">
-                                 <span className="material-symbols-outlined text-[16px]">check_circle</span> 데이터 수집 및 초안 작성 완료
-                             </div>
-                             <button onClick={() => setCollectedDraft('')} className="text-xs font-bold text-outline hover:text-primary transition-colors flex items-center gap-1">
-                                 <span className="material-symbols-outlined text-[14px]">refresh</span> 다시 수집하기
-                             </button>
+             {/* 메인 컨텐츠 영역 */}
+             <div className="flex-1 flex flex-col">
+                {draftTree.length === 0 && !isGeneratingDraft ? (
+                   /* 초기 상태: 시작 버튼 */
+                   <div className="flex-1 flex flex-col items-center justify-center p-12 gap-8">
+                      <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center relative">
+                         <span className="material-symbols-outlined text-4xl text-primary opacity-60">database</span>
+                         <div className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"></div>
+                      </div>
+                      
+                      <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                         <h5 className="font-bold text-on-surface">리서치 모드를 선택하세요</h5>
+                         
+                         <div className="grid grid-cols-2 gap-3 w-full p-2 bg-surface-container rounded-2xl border border-outline-variant/10">
+                            <button 
+                               onClick={() => setResearchMode('fast')}
+                               className={`flex flex-col items-center gap-2 p-4 rounded-xl transition-all ${researchMode === 'fast' ? 'bg-white shadow-md border-primary/20 border ring-2 ring-primary/10' : 'hover:bg-surface-container-high opacity-60'}`}
+                            >
+                               <span className={`material-symbols-outlined text-2xl ${researchMode === 'fast' ? 'text-primary' : 'text-outline'}`}>bolt</span>
+                               <div className="text-center">
+                                  <div className={`text-xs font-black ${researchMode === 'fast' ? 'text-primary' : 'text-on-surface'}`}>FAST</div>
+                                  <div className="text-[10px] text-outline mt-0.5">속도 중시 (~2분)</div>
+                               </div>
+                            </button>
+                            <button 
+                               onClick={() => setResearchMode('deep')}
+                               className={`flex flex-col items-center gap-2 p-4 rounded-xl transition-all ${researchMode === 'deep' ? 'bg-white shadow-md border-primary/20 border ring-2 ring-primary/10' : 'hover:bg-surface-container-high opacity-60'}`}
+                            >
+                               <span className={`material-symbols-outlined text-2xl ${researchMode === 'deep' ? 'text-primary' : 'text-outline'}`}>search_insights</span>
+                               <div className="text-center">
+                                  <div className={`text-xs font-black ${researchMode === 'deep' ? 'text-primary' : 'text-on-surface'}`}>DEEP</div>
+                                  <div className="text-[10px] text-outline mt-0.5">품질 중시 (~7분)</div>
+                               </div>
+                            </button>
                          </div>
-                         <textarea 
-                             readOnly 
-                             value={collectedDraft} 
-                             className="w-full min-h-[150px] bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-4 text-sm resize-none outline-none font-mono text-on-surface leading-[1.8] custom-scrollbar"
-                         />
-                     </div>
-                 </div>
+                      </div>
+
+                      <div className="text-center">
+                         <p className="text-xs text-outline mt-1 italic">선택한 모드로 팩트 수집 및 초안 작성을 시작합니다.</p>
+                      </div>
+                      
+                      <button 
+                          onClick={handleGenerateDraft}
+                          className="px-10 py-4 bg-primary text-white text-sm font-black rounded-2xl shadow-[0_8px_20px_-4px_rgba(56,107,245,0.4)] hover:shadow-xl hover:-translate-y-1 transition-all flex items-center gap-2"
+                      >
+                         <span className="material-symbols-outlined text-xl">magic_button</span>
+                         ✨ {researchMode === 'deep' ? 'DEEP' : 'FAST'} 초안 생성 시작
+                      </button>
+                   </div>
+                ) : isGeneratingDraft ? (
+                   /* 생성 중 상태: 모던한 로딩 UI */
+                   <div className="flex-1 flex flex-col items-center justify-center p-12 gap-6 bg-surface-container-lowest/30">
+                      <div className="relative">
+                         <div className="w-24 h-24 rounded-full border-4 border-primary/10 border-t-primary animate-spin"></div>
+                         <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-4xl text-primary animate-pulse">
+                               {researchMode === 'deep' ? 'search_insights' : 'bolt'}
+                            </span>
+                         </div>
+                      </div>
+                      
+                      <div className="text-center space-y-2">
+                         <div className="flex items-center justify-center gap-2">
+                            <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-black rounded-full uppercase tracking-wider">
+                               {researchMode} Mode Active
+                            </span>
+                         </div>
+                         <h5 className="font-bold text-on-surface">AI가 초안을 작성하고 있습니다</h5>
+                         <p className="text-xs text-outline max-w-xs mx-auto leading-relaxed">
+                            실시간 리서치 데이터를 분석하여 각 섹션별 최적의 내용을 구성 중입니다. 잠시만 기다려 주세요.
+                         </p>
+                      </div>
+
+                      <div className="w-full max-w-md space-y-3">
+                         <div className="flex justify-between items-end px-1">
+                            <span className="text-[10px] font-bold text-primary uppercase tracking-tight">Status</span>
+                            <span className="text-[10px] font-medium text-outline">
+                               {draftLogs.length > 0 ? draftLogs[draftLogs.length - 1].replace('> ', '') : '초기화 중...'}
+                            </span>
+                         </div>
+                         <div className="h-1.5 w-full bg-surface-container-high rounded-full overflow-hidden">
+                            <div className="h-full bg-primary animate-[shimmer_2s_infinite] w-full origin-left shadow-[0_0_10px_rgba(56,107,245,0.4)]"></div>
+                         </div>
+                      </div>
+                   </div>
+                ) : (
+                   /* 완료 상태: 스플릿 뷰 에디터 */
+                   <div className="flex flex-col md:flex-row flex-1 min-h-[500px]">
+                      {/* 좌측: 목차 트리 */}
+                      <div className="w-full md:w-64 border-r border-outline-variant/10 bg-surface-container-low/30 overflow-y-auto">
+                         <div className="p-4 border-b border-outline-variant/5 bg-surface-container-high/20">
+                            <span className="text-[10px] font-black text-outline uppercase tracking-wider">목차 네비게이션</span>
+                         </div>
+                         <nav className="p-2 flex flex-col gap-1">
+                            { (function renderToC(nodes: DocumentNode[], depth = 0) {
+                               return nodes.map(node => (
+                                  <React.Fragment key={node.id}>
+                                     <button
+                                        onClick={() => setSelectedNodeId(node.id)}
+                                        className={`w-full text-left p-2.5 rounded-lg text-xs transition-all flex items-center gap-2 group
+                                           ${selectedNodeId === node.id ? 'bg-primary text-white font-bold shadow-md' : 'hover:bg-surface-container-high text-on-surface/70'}
+                                           ${node.draft_content ? 'opacity-100' : 'opacity-40'}
+                                        `}
+                                        style={{ paddingLeft: `${depth * 12 + 10}px` }}
+                                     >
+                                        <span className={`material-symbols-outlined text-[16px] ${selectedNodeId === node.id ? 'text-white' : 'text-primary/40'}`}>
+                                           {node.children && node.children.length > 0 ? 'folder' : 'description'}
+                                        </span>
+                                        <span className="truncate">{node.title}</span>
+                                        {node.draft_content && selectedNodeId !== node.id && (
+                                           <span className="ml-auto w-1.5 h-1.5 rounded-full bg-success ring-2 ring-success/20"></span>
+                                        )}
+                                     </button>
+                                     {node.children && renderToC(node.children, depth + 1)}
+                                  </React.Fragment>
+                               ));
+                            })(draftTree)}
+                         </nav>
+                      </div>
+
+                      {/* 우측: 에디터 영역 */}
+                      <div className="flex-1 flex flex-col bg-white">
+                         {selectedNode ? (
+                            <>
+                               <div className="px-5 py-3 border-b border-outline-variant/10 flex items-center justify-between bg-surface-container-lowest">
+                                  <div className="flex items-center gap-2">
+                                     <span className="text-sm font-black text-on-surface">{selectedNode.title}</span>
+                                     <span className="text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded-full font-bold uppercase">Section Draft</span>
+                                  </div>
+                                  <div className="flex bg-surface-container-high p-0.5 rounded-lg border border-outline-variant/10">
+                                     <button 
+                                        onClick={() => setActiveTab('preview')}
+                                        className={`px-3 py-1 text-[10px] font-black rounded-md transition-all ${activeTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                     >미리보기</button>
+                                     <button 
+                                        onClick={() => setActiveTab('edit')}
+                                        className={`px-3 py-1 text-[10px] font-black rounded-md transition-all ${activeTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                     >편집</button>
+                                  </div>
+                               </div>
+                               
+                               <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                                  {activeTab === 'edit' ? (
+                                     <textarea
+                                        value={selectedNode.draft_content || ''}
+                                        onChange={(e) => setDraftTree(prev => findAndUpdateNode(prev, selectedNode.id, e.target.value))}
+                                        className="w-full h-full min-h-[400px] text-sm leading-[1.8] text-on-surface outline-none font-mono resize-none bg-transparent"
+                                        placeholder="이 섹션의 내용을 입력하세요..."
+                                     />
+                                  ) : (
+                                     <div className="prose prose-sm max-w-none text-on-surface leading-loose">
+                                        <div className="whitespace-pre-wrap font-sans text-xs bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/10 italic text-outline/80 mb-6 font-medium">
+                                            💡 초안은 AI에 의해 생성되었으므로, 반드시 내용을 검토하고 실정에 맞게 수정하시기 바랍니다.
+                                        </div>
+                                        <div className="whitespace-pre-wrap text-sm leading-relaxed">{selectedNode.draft_content || '내용이 없습니다.'}</div>
+                                     </div>
+                                  )}
+                               </div>
+                            </>
+                         ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center opacity-40">
+                               <span className="material-symbols-outlined text-5xl mb-3 text-primary">format_list_bulleted</span>
+                               <p className="text-sm font-bold text-on-surface">좌측 목차를 선택하여<br/>작성된 초안을 확인하고 수정하세요.</p>
+                            </div>
+                         )}
+                      </div>
+                   </div>
+                )}
+             </div>
+
+             {/* 하단 툴바 */}
+             {draftTree.length > 0 && !isGeneratingDraft && (
+                <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between">
+                   <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
+                      <span className="material-symbols-outlined text-sm">info</span>
+                      수정 사항은 브라우저 세션에 임시 보관 중입니다.
+                   </div>
+                   <button 
+                       onClick={async () => {
+                           if (!props.documentId) return;
+                           try {
+                               const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+                               await api.saveProject(props.documentId, props.fileName || 'Unknown', selectedIds, contentIds, draftTree);
+                               handleStepCompletion(3);
+                               setTimeout(() => toggleStep(4), 300);
+                           } catch(err) {
+                               alert("저장 실패: " + err);
+                           }
+                       }}
+                       className="px-6 py-2.5 bg-secondary text-on-secondary text-sm font-black rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center gap-2"
+                   >
+                      <span className="material-symbols-outlined text-lg">check_circle</span>
+                      💾 초안 확정 및 저장 후 다음 단계로
+                   </button>
+                </div>
              )}
           </div>
         </AccordionSection>

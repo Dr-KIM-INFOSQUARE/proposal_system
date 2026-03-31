@@ -1,3 +1,5 @@
+import type { DocumentNode } from '../types';
+
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 export const api = {
@@ -30,7 +32,14 @@ export const api = {
     return response.json();
   },
   
-  saveProject: async (documentId: string, name: string, filename: string, selectedNodeIds: any[], contentNodeIds: any[]) => {
+  saveProject: async (
+    documentId: string, 
+    projectName: string, 
+    originalFilename: string, 
+    selectedNodeIds: (string | number)[], 
+    contentNodeIds: (string | number)[], 
+    treeData?: DocumentNode[]
+  ) => {
     const response = await fetch(`${API_BASE_URL}/projects/save`, {
       method: 'POST',
       headers: {
@@ -38,10 +47,11 @@ export const api = {
       },
       body: JSON.stringify({
         document_id: documentId,
-        name: name,
-        filename: filename,
+        name: projectName,
+        filename: originalFilename,
         selected_node_ids: selectedNodeIds,
         content_node_ids: contentNodeIds,
+        tree_data: treeData,
       }),
     });
     
@@ -70,8 +80,16 @@ export const api = {
     return response.json();
   },
 
-  getProjects: async () => {
-    const response = await fetch(`${API_BASE_URL}/projects`);
+  getProjects: async (keyword?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (keyword) params.append('keyword', keyword);
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `${API_BASE_URL}/projects?${queryString}` : `${API_BASE_URL}/projects`;
+    
+    const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Failed to load projects: ${response.statusText}`);
     }
@@ -185,11 +203,11 @@ export const api = {
             }
             if (data.message) onProgress(data.message);
             if (data.status === 'completed') result = data.data; // data.data contains master_brief and usage
-          } catch (e) {
-            if (e instanceof Error && e.message === 'Unknown stream error' || (e as Error).message.includes('error')) {
-              throw e;
+          } catch (err) {
+            if (err instanceof Error && err.message === 'Unknown stream error' || (err as Error).message.includes('error')) {
+              throw err;
             }
-            console.error("Parse error in enhance stream", e);
+            console.error("Parse error in enhance stream", err);
           }
         }
       }
@@ -212,6 +230,89 @@ export const api = {
       throw new Error(`Master brief save failed: ${response.statusText}`);
     }
     return response.json();
+  },
+
+  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', onProgress: (msg: string) => void) => {
+    console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode})`);
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        model_id: modelId,
+        research_mode: researchMode
+      }),
+    });
+
+    console.log(`[API] Response status: ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      // JSON 파싱 실패를 대비해 text로 먼저 받음
+      const errorText = await response.text().catch(() => "Unknown error");
+      console.error(`[API] Stream request failed: ${errorText}`);
+      throw new Error(`Draft generation failed: ${response.statusText} (${errorText})`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      console.error("[API] ReadableStream is NULL or not supported");
+      throw new Error('ReadableStream not supported');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalTree = null;
+
+    console.log("[API] Entering stream read loop...");
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          console.log("[API] Stream read COMPLETE");
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const rawData = line.substring(6).trim();
+            if (!rawData) continue;
+            
+            try {
+              const data = JSON.parse(rawData);
+              console.log("[API] SSE data received:", data);
+              
+              if (data.status === 'error') {
+                console.error("[API] SSE reported error:", data.message);
+                throw new Error(data.message || 'Stream reported error');
+              }
+              
+              if (data.status === 'completed') {
+                console.log("[API] Success mark found. Saving finalTree.");
+                finalTree = data.tree;
+              } else if (data.status) {
+                onProgress(data.status);
+              } else if (data.phase_status) {
+                onProgress(data.phase_status);
+              }
+            } catch (err) {
+              console.error("[API] JSON parse error in stream:", err, "Raw data:", rawData);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[API] ERROR during stream reading:", err);
+      throw err;
+    }
+
+    console.log("[API] Returning finalTree:", finalTree ? "WITH CONTENT" : "EMPTY/NULL");
+    return finalTree;
   },
 
   uploadDocumentStream: async (file: File, modelId: string, onProgress: (msg: string) => void) => {

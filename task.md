@@ -1,0 +1,14 @@
+- [x] [BACKEND] NLM Error 해결: --json 플래그 제거 및 텍스트 파싱 로직 강화
+- [x] [BACKEND] Phase 3: Research Status 및 Import 안정화 (latest 폴백 추가)
+- [x] [BACKEND] Phase 5: 재귀 탐색 로직 수정 (깊은 뎁스 섹션 누락 해결)
+- [x] [BACKEND] Phase 5: 동적 쿼리 고도화 (writingGuide, userInstruction, tableMetadata 반영)
+- [x] [BACKEND] Phase 5: 섹션 간 2초 딜레이 추가로 안정성 확보
+- [x] [BACKEND] 리서치 모드(Fast/Deep) 동적 연동 완료
+- [x] [BACKEND] 프로젝트명 기반 안전한 노트북 제목(Title) 생성 로직 적용
+- [x] [DATABASE] Project 모델에 notebook_id 컬럼 추가 (자동 상성 정책)
+- [x] [BACKEND] 기존 notebook_id 존재 시 Phase 1(생성/업로드) 스킵 및 재사용 로직 구현
+- [x] [FRONTEND] 리서치 모드(Fast/Deep) 선택 UI 및 헤더 실시간 알림 연동 완료
+- [x] [FRONTEND] 모던한 로딩 및 상태 표시 UI 구현 완료
+- [x] [UI/UX] 프로젝트 목록 테이블 디자인 개선 및 검색/필터링 기능 추가
+- [x] [WORKFLOW] 분석-아이디어-초안-완성 4단계 상태 표시 동기화 완료
+- [x] [BACKEND] 리서치 반입(Import) 파라미터 구조(--task-id) 수정 및 에러 로깅 강화
