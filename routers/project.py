@@ -16,6 +16,7 @@ from models.project_models import ProjectSaveRequest, ProjectRenameRequest, Idea
 from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
 from services.notebooklm_service import notebooklm_service
+from services.hwpx_service import generate_hwpx_from_draft
 
 router = APIRouter(prefix="/api", tags=["Projects"])
 
@@ -721,6 +722,49 @@ async def generate_draft_stream(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+
+@router.get("/projects/{document_id}/export_hwpx")
+async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    if not project.parsed_tree:
+        raise HTTPException(status_code=400, detail="Draft content is empty. Please complete Draft Generation first.")
+        
+    # JSON 문자열인 경우 파싱
+    tree_data = project.parsed_tree
+    if isinstance(tree_data, str):
+        try:
+            tree_data = json.loads(tree_data)
+        except:
+            tree_data = []
+
+    output_filename = f"{document_id}_draft.hwpx"
+    output_path = os.path.join(UPLOAD_DIR, output_filename)
+    
+    success = generate_hwpx_from_draft(document_id, tree_data, output_path)
+    
+    if not success:
+        # 템플릿이 없거나 생성 실패한 경우 (PDF 기반 등) 
+        # TODO: 빈 템플릿 기반 생성 로직 보완 예정
+        raise HTTPException(status_code=500, detail="Failed to generate HWPX file. Original template may be missing.")
+        
+    # 다운로드할 수 있는 상대 경로 반환 (또는 FileResponse 가능)
+    return {
+        "status": "success", 
+        "download_url": f"/api/projects/download/{output_filename}",
+        "filename": f"{project.name}_초안.hwpx"
+    }
+
+@router.get("/projects/download/{filename}")
+async def download_project_file(filename: str):
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    from fastapi.responses import FileResponse
+    return FileResponse(filepath, filename=filename)
 
 @router.delete("/projects/{document_id}")
 async def delete_project(document_id: str, db: Session = Depends(get_db)):

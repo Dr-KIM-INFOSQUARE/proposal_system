@@ -136,7 +136,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({
           className="group px-6 py-3 bg-primary text-on-primary font-bold rounded-2xl hover:shadow-[0_8px_24px_-4px_rgba(var(--primary-rgb),0.4)] transition-all flex items-center gap-3 self-start md:self-auto"
         >
           <span className="material-symbols-outlined transition-transform group-hover:rotate-90">add_circle</span>
-          <span>새 비즈니스 프로젝트</span>
+          <span>프로젝트 생성</span>
         </button>
       </div>
 

@@ -414,5 +414,18 @@ export const api = {
       }
     }
     return result;
+  },
+
+  exportHwpx: async (documentId: string) => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx`);
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Export failed: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return {
+        ...data,
+        download_url: data.download_url ? `http://127.0.0.1:8000${data.download_url}` : undefined
+    };
   }
 };

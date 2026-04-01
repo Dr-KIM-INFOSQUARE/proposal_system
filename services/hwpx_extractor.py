@@ -25,6 +25,7 @@ def extract_hwpx_to_markdown(file_path: str) -> str:
         with zipfile.ZipFile(file_path, 'r') as zp:
             # 섹션 파일 찾기
             sections = sorted([f for f in zp.namelist() if f.startswith('Contents/section') and f.endswith('.xml')])
+            global_table_idx = 0
             
             for section_file in sections:
                 with zp.open(section_file) as sf:
@@ -33,10 +34,11 @@ def extract_hwpx_to_markdown(file_path: str) -> str:
                     
                     # XML 엘리먼트를 재귀적으로 탐색하여 표 안팎의 텍스트 중복 추출을 방지
                     def traverse(elem, in_table=False):
+                        nonlocal global_table_idx
                         tag = elem.tag.split('}')[-1]
                         
                         if tag == 'tbl' and not in_table:
-                            markdown_lines.append("\n[Table]")
+                            markdown_lines.append(f"\n[Table INDEX: {global_table_idx}]")
                             # 표 내부 처리
                             for tr in elem.iter(f"{{{NS['hp']}}}tr"):
                                 row_texts = []
@@ -47,9 +49,10 @@ def extract_hwpx_to_markdown(file_path: str) -> str:
                                     row_texts.append(cell_text)
                                 markdown_lines.append("| " + " | ".join(row_texts) + " |")
                                 # 헤더 구분선 추가
-                                if len(markdown_lines) > 0 and markdown_lines[-1].startswith("|") and markdown_lines[-2] == "\n[Table]":
+                                if len(markdown_lines) > 0 and markdown_lines[-1].startswith("|") and markdown_lines[-2].startswith("\n[Table INDEX:"):
                                     markdown_lines.append("|" + "|".join(["---" for _ in row_texts]) + "|")
                             
+                            global_table_idx += 1
                             # 표 자체를 그렸으니, 표 내부에 있는 <p> 요소들은 다시 순회하지 않도록 리턴
                             return
                         

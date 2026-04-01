@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { ProjectList } from './components/ProjectList';
 import { AnalysisWorkflow } from './components/AnalysisWorkflow';
 import { BillingView } from './components/BillingView';
+import { ErrorRetryModal } from './components/ErrorRetryModal';
 import { api } from './services/api';
 import type { DocumentNode } from './types';
 
@@ -27,6 +28,11 @@ function App() {
   const [isEnhancing, setIsEnhancing] = useState<boolean>(false);
   const [enhanceMessage, setEnhanceMessage] = useState<string | null>(null);
 
+  const [retryModalConfig, setRetryModalConfig] = useState<{
+    isOpen: boolean;
+    modelName: string;
+    resolve?: (retry: boolean) => void;
+  } | null>(null);
 
   useEffect(() => {
       loadProjects();
@@ -68,32 +74,55 @@ function App() {
   const handleStartAnalysis = async () => {
     if (!selectedFile) return;
     
-    try {
-      setIsUploading(true);
-      setUploadMessage("준비 중...");
-      
-      const res = await api.uploadDocumentStream(selectedFile, selectedModel, (msg) => {
-        setUploadMessage(msg);
-      });
-      
-      if (res) {
-        setCurrentDocumentId(res.document_id);
-        setTreeData(res.tree || []);
-        setPdfUrl(res.pdf_url);
-        // 사용자가 이미 프로젝트 이름을 변경했으면 유지, 아니면 파일 이름 사용
-        if (!fileName || fileName === selectedFile.name) {
-          setFileName(selectedFile.name);
+    const fileToProcess = selectedFile;
+    const modelToUse = selectedModel;
+    let success = false;
+    
+    setIsUploading(true);
+    
+    while (!success) {
+      try {
+        setUploadMessage("준비 중...");
+        
+        const res = await api.uploadDocumentStream(fileToProcess, modelToUse, (msg) => {
+          setUploadMessage(msg);
+        });
+        
+        if (res) {
+          setCurrentDocumentId(res.document_id);
+          setTreeData(res.tree || []);
+          setPdfUrl(res.pdf_url);
+          // 사용자가 이미 프로젝트 이름을 변경했으면 유지, 아니면 파일 이름 사용
+          setFileName(prev => (!prev || prev === fileToProcess.name) ? fileToProcess.name : prev);
+          setOriginalFileName(fileToProcess.name);
+          success = true;
         }
-        setOriginalFileName(selectedFile.name);
+        setSelectedFile(null);
+        loadProjects();
+      } catch (err) {
+        console.error("분석 중 오류가 발생했습니다:", err);
+        const modelName = modelToUse.split('/').pop() || modelToUse;
+        
+        setIsUploading(false); // 잠시 로딩 풀기
+        setUploadMessage(null);
+        
+        const retryDecision = await new Promise<boolean>((resolve) => {
+          setRetryModalConfig({ isOpen: true, modelName, resolve });
+        });
+        
+        setRetryModalConfig(null);
+        
+        if (!retryDecision) {
+          setSelectedFile(null); // 취소했으므로 선택 파일 해제
+          break;
+        } else {
+          setIsUploading(true); // 다시 로딩 시작
+        }
       }
-      setSelectedFile(null);
-      loadProjects();
-    } catch (err) {
-      alert("분석 중 오류가 발생했습니다: " + err);
-    } finally {
-      setIsUploading(false);
-      setUploadMessage(null);
     }
+    
+    setIsUploading(false);
+    setUploadMessage(null);
   };
 
   const handleSave = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[]) => {
@@ -164,23 +193,48 @@ function App() {
 
   const handleReanalyze = async () => {
     if (!currentDocumentId) return;
-    try {
-      setIsUploading(true);
-      setUploadMessage("재분석 준비 중...");
-      const res = await api.reanalyzeProjectStream(currentDocumentId, selectedModel, (msg) => {
-        setUploadMessage(msg);
-      });
-      if (res && res.tree) {
-        setTreeData(res.tree);
-        // 트리가 갱신되었으므로 완료 목록 갱신 등은 필요 없을 수도 있음 (이미 로드된 상태)
-        alert("지정한 모델로 재분석을 완료했습니다.");
+    
+    const docId = currentDocumentId;
+    const modelToUse = selectedModel;
+    let success = false;
+    
+    setIsUploading(true);
+    
+    while (!success) {
+      try {
+        setUploadMessage("재분석 준비 중...");
+        const res = await api.reanalyzeProjectStream(docId, modelToUse, (msg) => {
+          setUploadMessage(msg);
+        });
+        if (res && res.tree) {
+          setTreeData(res.tree);
+          // 트리가 갱신되었으므로 완료 목록 갱신 등은 필요 없을 수도 있음 (이미 로드된 상태)
+          alert("지정한 모델로 재분석을 완료했습니다.");
+          success = true;
+        }
+      } catch (err) {
+        console.error("재분석 중 오류가 발생했습니다:", err);
+        const modelName = modelToUse.split('/').pop() || modelToUse;
+        
+        setIsUploading(false); // 잠시 로딩 멈춤
+        setUploadMessage(null);
+        
+        const retryDecision = await new Promise<boolean>((resolve) => {
+          setRetryModalConfig({ isOpen: true, modelName, resolve });
+        });
+        
+        setRetryModalConfig(null);
+        
+        if (!retryDecision) {
+          break; // 취소
+        } else {
+          setIsUploading(true); // 다시 재시작
+        }
       }
-    } catch (err) {
-      alert("재분석 중 오류가 발생했습니다: " + err);
-    } finally {
-      setIsUploading(false);
-      setUploadMessage(null);
     }
+    
+    setIsUploading(false);
+    setUploadMessage(null);
   };
 
   const handleReset = () => {
@@ -197,6 +251,20 @@ function App() {
       setIsUploading(false);
       setActiveView('analysis');
     }
+  };
+
+  const handleCreateNewProject = () => {
+    setCurrentDocumentId(null);
+    setTreeData([]);
+    setFileName(null);
+    setOriginalFileName(null);
+    setFileSize(null);
+    setPdfUrl(null);
+    setInitialMasterBrief('');
+    setInitialIdeaData('');
+    setSelectedFile(null);
+    setIsUploading(false);
+    setActiveView('analysis');
   };
 
   const handleRename = async (documentId: string, newTitle: string) => {
@@ -288,7 +356,7 @@ function App() {
         ) : activeView === 'projects' ? (
           <div className="block flex-1 flex-col">
              <ProjectList 
-                onNewProject={() => setActiveView('analysis')} 
+                onNewProject={handleCreateNewProject} 
                 onOpenProject={handleOpenProject} 
                 onDeleteProject={handleDeleteProject}
                 onRename={handleRename}
@@ -300,6 +368,15 @@ function App() {
           <div className="block flex-1 flex-col">
              <BillingView />
           </div>
+        )}
+        
+        {retryModalConfig && (
+          <ErrorRetryModal 
+            isOpen={retryModalConfig.isOpen}
+            modelName={retryModalConfig.modelName}
+            onRetry={() => retryModalConfig.resolve && retryModalConfig.resolve(true)}
+            onCancel={() => retryModalConfig.resolve && retryModalConfig.resolve(false)}
+          />
         )}
       </main>
     </div>

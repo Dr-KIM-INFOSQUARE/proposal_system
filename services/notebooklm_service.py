@@ -55,6 +55,7 @@ class NotebookLMService:
                 
                 return subprocess.run(
                     cmd,
+                    input="y\n",
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
@@ -63,7 +64,6 @@ class NotebookLMService:
                     shell=(sys.platform == "win32"),
                     timeout=timeout or self.timeout
                 )
-
             # 별도 스레드에서 차단 없이 실행
             result = await asyncio.to_thread(sync_run)
             output = result.stdout + "\n" + result.stderr
@@ -239,7 +239,7 @@ class NotebookLMService:
                     try:
                         if final_task_id and final_task_id != "latest":
                             print(f"[NOTEBOOKLM_SERVICE] Importing research (ID: {final_task_id})")
-                            await self._run_command(["research", "import", notebook_id, "--task-id", final_task_id])
+                            await self._run_command(["research", "import", notebook_id, final_task_id])
                         else:
                             print(f"[NOTEBOOKLM_SERVICE] Importing research (latest)")
                             await self._run_command(["research", "import", notebook_id]) # 'latest'는 보통 인자 생략 시 동작
@@ -255,19 +255,39 @@ class NotebookLMService:
                 else:
                     yield json.dumps({"phase": 3, "status": f"Phase 3: 리서치 진행 중 ({poll_count * 30}초 경과...)"})
             
-            # Phase 4: Persona & Rules
-            print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring expert persona")
-            yield json.dumps({"phase": 4, "status": "Phase 4: 작성 전문가 페르소나 주입 중..."})
-            persona_prompt = (
-                "너는 정부지원사업 수석 컨설턴트야. 앞으로 내가 특정 목차를 주면, 오직 업로드된 사업 아이디어와 "
-                "검색된 소스만을 기반으로 실제 사업계획서에 들어갈 **본문 내용만** 작성해. "
-                "**[🚨절대 규칙🚨]**\n"
-                "1. 모든 문장은 명사형(음, 함, 됨 등)으로 끝맺고, 글머리기호(Bullet points)를 적용할 것.\n"
-                "2. **'알겠습니다', '숙지했습니다', '도출했습니다'와 같은 서론, 결론, 부연 설명, 자기소개 및 작업 확인 멘트를 절대 작성하지 마.**\n"
-                "3. **본문 내용 중에 [1], [2], [1-3] 등의 출처 표시(Citation)를 절대 포함하지 마.**\n"
-                "4. 오직 사업계획서 대지(Markdown)에 들어갈 실질적인 본문 텍스트만 출력해."
+            # Phase 4: Persona & Global Rules (글로벌 규칙 설정)
+            # 매번 쿼리에 넣는 것보다 노트북 레벨에 설정하는 것이 훨씬 일관된 결과를 보장함
+            print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring global chat persona and style rules")
+            yield json.dumps({"phase": 4, "status": "Phase 4: 글로벌 작성 규칙(명사형 종결 등) 적용 중..."})
+            
+            global_style_rules = (
+                "당신은 대한민국 최고의 정부지원사업 수석 컨설턴트이자 비즈니스 전략가입니다. "
+                "앞으로의 모든 답변에서 다음의 [🚨절대 작성 규칙🚨]을 무조건적으로 준수하십시오:\n"
+                "1. 모든 문장은 반드시 '~함.', '~임.', '~함.', '~임.'과 같이 **명사형 또는 종결형 종결 어미**로 끝낼 것. 절대 '~입니다', '~한다' 등을 사용하지 마시오.\n"
+                "2. 본문은 반드시 **불렛 포인트( - 또는 * )**를 활용하여 가독성 있게 구조화할 것.\n"
+                "3. **'알겠습니다', '숙지했습니다', '도출했습니다'와 같은 서론, 결론, 부연 설명, 작업 확인 멘트를 절대 작성하지 마.**\n"
+                "4. **본문 내용 중에 [1], [2], [1-3] 등의 출처 표시(Citation)를 절대 포함하지 마.**\n"
+                "5. **요청받은 [작성할 목차] 텍스트를 답변의 시작이나 중간에 절대 반복하여 출력하지 마.** 본문의 실질적인 내용만 바로 시작할 것.\n"
+                "6. **오직 요청받은 단일 항목에 대해서만 작성하고, 이후에 이어질 다른 목차나 주제는 절대 미리 작성하지 마시오.**\n"
+                "7. 표(Table) 작성 요청 시, 제공된 열(Column) 구조를 유지하되 정보량에 따라 행(Row)은 자유롭게 추가할 것.\n"
+                "8. 전문적이고 분석적인 톤앤매너를 유지하며, 구체적인 수치와 근거를 포함하여 작성할 것."
             )
-            await self._run_command(["notebook", "query", notebook_id, persona_prompt])
+
+            
+            try:
+                # nlm chat configure 를 통해 노트북 전체에 규칙 주입
+                await self._run_command([
+                    "chat", "configure", notebook_id,
+                    "--goal", "custom",
+                    "--prompt", global_style_rules,
+                    "--response-length", "longer"
+                ])
+                print("[NOTEBOOKLM_SERVICE] Global chat configuration (chat configure) applied successfully.")
+            except Exception as e:
+                print(f"[NOTEBOOKLM_SERVICE] Warning: Failed to configure global chat settings: {e}")
+                # Fallback: 기존처럼 query로 주입 시도
+                await self._run_command(["notebook", "query", notebook_id, global_style_rules])
+
 
             # Phase 5: Recursive Drafting
             print(f"[NOTEBOOKLM_SERVICE] Phase 5 - Generating content sections")
@@ -296,10 +316,16 @@ class NotebookLMService:
                             
                         if node_type == "table" and table_metadata:
                             metadata_str = json.dumps(table_metadata, ensure_ascii=False)
-                            prompt_parts.append(f"- 이 항목은 표(Table)로 작성되어야 해. 다음 구조를 참고하여 반드시 **Markdown 표 형식**으로 출력해 줘.\n  [표 구조]: {metadata_str}\n")
+                            prompt_parts.append(
+                                f"- 이 항목은 표(Table)로 작성되어야 해. 다음 구조를 참고하여 반드시 **Markdown 표 형식**으로 출력해 줘.\n"
+                                f"  [표 구조]: {metadata_str}\n"
+                                f"  단, **열(Column)의 개수와 구조는 반드시 유지하되, 정보의 양에 맞추어 행(Row)은 자유롭게 무제한으로 추가해서 작성해.**\n"
+                                f"  주의: 오직 이 표 하나만 작성하고, 다른 표나 섹션을 추가로 작성하지 마시오.\n"
+                            )
                         
-                        prompt_parts.append("- 출처 표시([1], [2] 등)는 절대 포함하지 말고 순수 본문 내용만 작성할 것.\n")
-                        prompt_parts.append("지금까지의 규칙을 엄수하여 위 내용을 구체적인 수치와 근거를 포함하여 **본문만** 작성해 줘. (부연 설명이나 수락 확인 멘트는 생략)")
+                        prompt_parts.append("\n설정된 [절대 작성 규칙]을 엄수하여 오직 이 항목의 **본문만** 상세히 작성해 줘.")
+
+
                         
                         final_prompt = "".join(prompt_parts)
                         
@@ -314,7 +340,9 @@ class NotebookLMService:
                             json_match = re.search(r"(\{.*\})", raw_ans, re.DOTALL)
                             if json_match:
                                 ans_json = json.loads(json_match.group(1))
-                                if "value" in ans_json and isinstance(ans_json["value"], dict):
+                                if "answer" in ans_json:
+                                    node["draft_content"] = ans_json["answer"]
+                                elif "value" in ans_json and isinstance(ans_json["value"], dict):
                                     node["draft_content"] = ans_json["value"].get("answer", raw_ans)
                                 else:
                                     node["draft_content"] = raw_ans

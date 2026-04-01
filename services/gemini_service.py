@@ -55,8 +55,10 @@ def _get_analysis_prompt(text: str) -> str:
         
         "3. **표 데이터 구조화 (tableMetadata) - 🚨 중요 🚨**:\n"
         "   - 노드 타입이 **table**인 경우, 해당 표의 구조를 분석하여 'tableMetadata' 속성에 JSON 객체로 저장하세요.\n"
+        "   - 또한 해당 표 원본 마크다운 텍스트 위에 붙어있는 '[Table INDEX: {번호}]'에서 번호를 정확히 추출하여 'tableMetadata' 객체 내부 최상단에 `\"table_index\": {번호}` 속성(Integer 타입)으로 **반드시** 포함시키세요. (이 인덱스는 데이터를 매핑하는 핵심 식별자입니다.)\n"
         "   - JSON 구조 예시:\n"
         "     {\n"
+        "       \"table_index\": 0,\n"
         "       \"headers\": [\"항목\", \"내용\", ...],\n"
         "       \"rows\": [{\"항목\": \"기능명\", \"내용\": null}, ...],\n"
         "       \"target_cells\": [{\"row_label\": \"...\", \"col_label\": \"...\"}, ...] // 입력을 받아야 하는 빈 칸들\n"

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../services/api';
 import { DocumentTree } from './DocumentTree';
+import { ErrorRetryModal } from './ErrorRetryModal';
 import type { DocumentTreeRef } from './DocumentTree';
 import type { DocumentNode } from '../types';
 
@@ -103,6 +104,13 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [masterBriefData, setMasterBriefData] = useState<any>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   
+  // 진행 상태 창 재시작 모달 (AnalysisWorkflow 내 독립적 관리)
+  const [retryModalConfig, setRetryModalConfig] = useState<{
+    isOpen: boolean;
+    modelName: string;
+    resolve?: (retry: boolean) => void;
+  } | null>(null);
+  
   // Step 3 UI States
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [draftLogs, setDraftLogs] = useState<string[]>([]);
@@ -122,45 +130,87 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       return;
     }
     
-    console.log("[Workflow] Starting draft generation. Mode:", researchMode);
-    setIsGeneratingDraft(true);
-    setDraftTree([]);
+    const docId = props.documentId;
+    const modelToUse = props.selectedModel;
+    const modeToUse = researchMode;
+    let success = false;
     
-    if (props.onEnhanceStateChange) {
-        props.onEnhanceStateChange(true, "초안 생성 초기화 중...");
-    }
-
-    try {
-      const finalTree = await api.generateDraftStream(
-        props.documentId, 
-        props.selectedModel,
-        researchMode,
-        (msg) => {
-          if (props.onEnhanceStateChange) {
-              props.onEnhanceStateChange(true, msg);
-          }
-          setDraftLogs(prev => [...prev, `> ${msg}`]);
+    console.log("[Workflow] Starting draft generation. Mode:", modeToUse);
+    setIsGeneratingDraft(true);
+    
+    // 자동 저장: 사용자가 선택한 노드 및 콘텐츠 구조를 DB에 확실히 저장
+    if (treeRef.current) {
+        try {
+            const { selectedIds, contentIds } = treeRef.current.getSelectedIds();
+            await api.saveProject(
+                docId, 
+                props.fileName?.split('.')[0] || 'Draft', 
+                props.fileName || 'document.hwpx', 
+                selectedIds, 
+                contentIds
+            );
+            console.log("[Workflow] Auto-saved tree selection before draft generation.");
+            // UI 상태와의 동기화를 위해 부모에도 컴파일된 선택 데이터를 전달
+            props.onSave(selectedIds, contentIds);
+        } catch (e) {
+            console.error("[Workflow] Failed to auto-save tree selection:", e);
         }
-      );
-
-      if (finalTree) {
-        setDraftTree(finalTree);
+    }
+    
+    while (!success) {
+      try {
+        setDraftTree([]); // 루프 돌 때마다 초기화
         if (props.onEnhanceStateChange) {
-            props.onEnhanceStateChange(false, "초안 작성이 완료되었습니다.");
+            props.onEnhanceStateChange(true, "초안 생성 초기화 중...");
         }
-        const firstDraftNode = findFirstContentNode(finalTree);
-        if (firstDraftNode) setSelectedNodeId(firstDraftNode.id);
+
+        const finalTree = await api.generateDraftStream(
+          docId, 
+          modelToUse,
+          modeToUse,
+          (msg) => {
+            if (props.onEnhanceStateChange) {
+                props.onEnhanceStateChange(true, msg);
+            }
+            // 너무 많은 로그가 누적되지 않게 할 수도 있지만 일반적인 로깅 목적으로 추가
+            setDraftLogs(prev => [...prev, `> ${msg}`]);
+          }
+        );
+
+        if (finalTree) {
+          setDraftTree(finalTree);
+          if (props.onEnhanceStateChange) {
+              props.onEnhanceStateChange(false, "초안 작성이 완료되었습니다.");
+          }
+          const firstDraftNode = findFirstContentNode(finalTree);
+          if (firstDraftNode) setSelectedNodeId(firstDraftNode.id);
+          success = true;
+        }
+      } catch (err) {
+        console.error("[Workflow] Draft generation failed:", err);
+        const modelName = modelToUse.split('/').pop() || modelToUse;
+        
+        if (props.onEnhanceStateChange) {
+            props.onEnhanceStateChange(false);
+        }
+        
+        const retryDecision = await new Promise<boolean>((resolve) => {
+          setRetryModalConfig({ isOpen: true, modelName, resolve });
+        });
+        
+        setRetryModalConfig(null);
+        
+        if (!retryDecision) {
+          setDraftLogs(prev => [...prev, `> [오류] 재시작 취소됨`]);
+          break; // 취소
+        } else {
+          setDraftLogs(prev => [...prev, `> [재시도] 다시 시작 중...`]);
+          // 다음 루프에서 `props.onEnhanceStateChange(true, "초안 생성 초기화 중...")` 가 다시 트리거 됨
+        }
       }
-    } catch (err) {
-      console.error("[Workflow] Draft generation failed:", err);
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      if (props.onEnhanceStateChange) {
-          props.onEnhanceStateChange(false);
-      }
-      alert("초안 생성 중 오류가 발생했습니다: " + errorMsg);
-    } finally {
-      setIsGeneratingDraft(false);
     }
+    
+    setIsGeneratingDraft(false);
   };
 
   // 트리에서 첫 번째 컨텐츠 노드 찾기
@@ -254,7 +304,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   useEffect(() => {
     if (props.initialMasterBrief) {
       try {
-        const parsed = JSON.parse(props.initialMasterBrief);
+        let cleanInitJson = props.initialMasterBrief.trim();
+        if (cleanInitJson.startsWith('```json')) {
+            cleanInitJson = cleanInitJson.replace(/^```json/, '').replace(/```$/, '').trim();
+        } else if (cleanInitJson.startsWith('```')) {
+            cleanInitJson = cleanInitJson.replace(/^```/, '').replace(/```$/, '').trim();
+        }
+        
+        const parsed = JSON.parse(cleanInitJson);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             setMasterBriefData(parsed);
             setMasterBrief('');
@@ -279,8 +336,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   useEffect(() => {
     if (props.documentId && !autoOpenTriggered && completedSteps.length > 0) {
       const lastStep = Math.max(...completedSteps);
-      console.log(`[Workflow] Auto-opening last completed step: ${lastStep}`);
-      setActiveStep(lastStep);
+      const nextStep = Math.min(lastStep + 1, 4);
+      console.log(`[Workflow] Auto-opening next step: ${nextStep} (last was ${lastStep})`);
+      setActiveStep(nextStep);
       setAutoOpenTriggered(true);
     }
   }, [props.documentId, completedSteps, autoOpenTriggered]);
@@ -579,39 +637,84 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
                         if (!props.documentId) return alert("프로젝트가 저장되지 않았습니다. 문서 구조 분석을 먼저 저장해주세요.");
                         
-                        try {
-                            const initialIdeaJsonToSave = JSON.stringify({
-                                mode: ideaMode,
-                                guideAnswers,
-                                ideaText
-                            });
-                            
-                            let currentMasterBrief = masterBrief;
-                            if (masterBriefData) currentMasterBrief = JSON.stringify(masterBriefData);
-                            
-                            api.saveMasterBrief(props.documentId, currentMasterBrief, initialIdeaJsonToSave).catch(e => console.error("Auto-save failed", e));
-                            
-                            if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "최신 웹 검색을 통해 시장 조사를 진행하는 중입니다...");
-                            setIsEnhancing(true);
-                            const res = await api.enhanceIdeaStream(props.documentId, finalPrompt, props.selectedModel, (msg) => {
-                                if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, msg);
-                            });
-                            
-                            if (res && res.master_brief) {
-                                if (typeof res.master_brief === 'object' && res.master_brief !== null) {
-                                    setMasterBriefData(res.master_brief);
-                                    setMasterBrief('');
-                                } else {
-                                    setMasterBrief(res.master_brief);
-                                    setMasterBriefData(null);
-                                }
-                            }
-                        } catch (err) {
-                            alert("고도화 실패: " + err);
-                        } finally {
-                            setIsEnhancing(false);
-                            if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
+                        setIsEnhancing(true);
+                        let success = false;
+                        
+                        while (!success) {
+                          try {
+                              const initialIdeaJsonToSave = JSON.stringify({
+                                  mode: ideaMode,
+                                  guideAnswers,
+                                  ideaText
+                              });
+                              
+                              let currentMasterBrief = masterBrief;
+                              if (masterBriefData) currentMasterBrief = JSON.stringify(masterBriefData);
+                              
+                              api.saveMasterBrief(props.documentId, currentMasterBrief, initialIdeaJsonToSave).catch(e => console.error("Auto-save failed", e));
+                              
+                              if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "최신 웹 검색을 통해 시장 조사를 진행하는 중입니다...");
+                              
+                              const res = await api.enhanceIdeaStream(props.documentId, finalPrompt, props.selectedModel, (msg) => {
+                                  if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, msg);
+                              });
+                              
+                              if (res && res.master_brief) {
+                                  let parsedData = null;
+                                  if (typeof res.master_brief === 'object' && res.master_brief !== null) {
+                                      parsedData = res.master_brief;
+                                  } else if (typeof res.master_brief === 'string') {
+                                      try {
+                                          // Remove potential markdown JSON code block markers before parsing
+                                          let cleanJsonString = res.master_brief.trim();
+                                          if (cleanJsonString.startsWith('```json')) {
+                                              cleanJsonString = cleanJsonString.replace(/^```json/, '').replace(/```$/, '').trim();
+                                          } else if (cleanJsonString.startsWith('```')) {
+                                              cleanJsonString = cleanJsonString.replace(/^```/, '').replace(/```$/, '').trim();
+                                          }
+                                          
+                                          const parsed = JSON.parse(cleanJsonString);
+                                          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                              parsedData = parsed;
+                                          }
+                                      } catch(e) {
+                                          // Fallback to treat as plain string
+                                      }
+                                  }
+
+                                  if (parsedData) {
+                                      setMasterBriefData(parsedData);
+                                      setMasterBrief('');
+                                  } else {
+                                      setMasterBrief(res.master_brief);
+                                      setMasterBriefData(null);
+                                  }
+                              }
+                              success = true;
+                          } catch (err) {
+                              console.error("[Workflow] enhanceIdeaStream failed:", err);
+                              const modelToUse = props.selectedModel;
+                              const modelName = modelToUse.split('/').pop() || modelToUse;
+                              
+                              if (props.onEnhanceStateChange) {
+                                  props.onEnhanceStateChange(false);
+                              }
+                              
+                              const retryDecision = await new Promise<boolean>((resolve) => {
+                                  setRetryModalConfig({ isOpen: true, modelName, resolve });
+                              });
+                              
+                              setRetryModalConfig(null);
+                              
+                              if (!retryDecision) {
+                                  break; // 취소
+                              }
+                              // 재시작 시 루프가 계속됨
+                          }
                         }
+                        
+                        setIsEnhancing(false);
+                        if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
                     }}
                     disabled={isEnhancing || (ideaMode === 'guide' ? !guideAnswers.q1.trim() : !ideaText.trim())}
                     className="mt-4 w-full py-4 bg-primary text-white text-sm font-bold rounded-xl shadow-lg hover:shadow-xl hover:bg-primary/90 disabled:opacity-50 disabled:hover:shadow-none flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
@@ -995,6 +1098,28 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                       <span className="material-symbols-outlined text-lg">check_circle</span>
                       💾 초안 확정 및 저장 후 다음 단계로
                    </button>
+                   <button 
+                        onClick={async () => {
+                            if (!props.documentId) return;
+                            try {
+                                const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+                                await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
+                                const data = await api.exportHwpx(props.documentId);
+                                if (data.status === 'success' && data.download_url) {
+                                    window.location.href = data.download_url;
+                                } else {
+                                    alert("파일 생성 실패: " + (data.detail || "알 수 없는 오류"));
+                                }
+                            } catch(err) {
+                                alert("파일 생성 중 오류가 발생했습니다: " + err);
+                            }
+                        }}
+                        className="px-5 py-2.5 ml-3 bg-primary/10 text-primary text-sm font-black rounded-xl border border-primary/20 hover:bg-primary/20 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                        title="고도화 단계를 거치지 않고 현재 초안으로 즉시 HWPX 파일을 만듭니다."
+                    >
+                        <span className="material-symbols-outlined text-lg">file_download</span>
+                        HWPX 파일로 즉시 생성
+                    </button>
                 </div>
              )}
           </div>
@@ -1068,6 +1193,15 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           </div>
         </AccordionSection>
       </div>
+      
+      {retryModalConfig && (
+        <ErrorRetryModal 
+          isOpen={retryModalConfig.isOpen}
+          modelName={retryModalConfig.modelName}
+          onRetry={() => retryModalConfig.resolve && retryModalConfig.resolve(true)}
+          onCancel={() => retryModalConfig.resolve && retryModalConfig.resolve(false)}
+        />
+      )}
     </div>
   );
 };
