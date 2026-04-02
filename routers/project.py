@@ -786,20 +786,41 @@ async def download_project_file(filename: str):
     from fastapi.responses import FileResponse
     return FileResponse(filepath, filename=filename)
 
+
+
 @router.post("/projects/{document_id}/draft/reset")
 async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
-    """작업 초기화를 위해 프로젝트의 NotebookLM 진행 상태를 리셋합니다."""
+    """작업 초기화를 위해 프로젝트의 NotebookLM 진행 상태 및 생성된 초안을 완전히 리셋합니다."""
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
+    # 1. 프로젝트 메인 상태 초기화
     project.notebook_id = None
     project.research_mode = None
-    project.persona_injected = False
-    project.is_draft_generated = False
-    # 기존 초안 결과물 초기화 여부는 선택 (여기서는 DB 상태만 초기화하여 재실행 유도)
+    # models/database.py에 research_status가 없으므로 해당 필드 할당은 생략
+    project.persona_injected = 0
+    
+    # 2. parsed_tree 내의 모든 노드에 대해 'content' 및 'draft_content' 필드 초기화
+    def clear_content_recursive(nodes):
+        if not nodes or not isinstance(nodes, list):
+            return
+        for node in nodes:
+            if "content" in node:
+                node["content"] = None
+            if "draft_content" in node:
+                node["draft_content"] = None
+            if "children" in node and node["children"]:
+                clear_content_recursive(node["children"])
+    
+    if project.parsed_tree:
+        import copy
+        new_tree = copy.deepcopy(project.parsed_tree)
+        clear_content_recursive(new_tree)
+        project.parsed_tree = new_tree
+        
     db.commit()
-    return {"status": "success", "message": "Drafting state reset successfully"}
+    return {"status": "success", "message": "모든 진행 상태와 초안 데이터가 초기화되었습니다."}
 
 @router.delete("/projects/{document_id}")
 async def delete_project(document_id: str, db: Session = Depends(get_db)):
