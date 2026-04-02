@@ -26,3 +26,4 @@ class DraftGenerateRequest(BaseModel):
     document_id: str
     model_id: Optional[str] = "models/gemini-3.1-pro-preview" # 기본 모델 설정
     research_mode: str = "deep" # fast | deep
+    engine: str = "lxml" # lxml | pyhwpx

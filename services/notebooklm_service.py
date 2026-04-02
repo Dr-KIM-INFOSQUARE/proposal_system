@@ -61,7 +61,7 @@ class NotebookLMService:
                     encoding='utf-8',
                     errors='ignore',
                     env=current_env,
-                    shell=(sys.platform == "win32"),
+                    shell=False,
                     timeout=timeout or self.timeout
                 )
             # 별도 스레드에서 차단 없이 실행
@@ -108,7 +108,19 @@ class NotebookLMService:
             print(f"[NOTEBOOKLM_SERVICE] EXCEPTION: {error_trace}")
             raise Exception(f"Failed to execute NLM command: {str(e)} | Details: {type(e).__name__}")
 
-    async def generate_draft_stream(self, document_id: str, master_brief: str, document_tree: List[Dict[str, Any]], pdf_path: Optional[str] = None, research_mode: str = "deep", project_name: Optional[str] = None, existing_notebook_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+    async def generate_draft_stream(
+        self, 
+        document_id: str, 
+        master_brief: str, 
+        document_tree: List[Dict[str, Any]], 
+        pdf_path: Optional[str] = None, 
+        research_mode: str = "deep", 
+        project_name: Optional[str] = None, 
+        existing_notebook_id: Optional[str] = None,
+        last_research_mode: Optional[str] = None,
+        has_persona: bool = False
+    ) -> AsyncGenerator[str, None]:
+
         """5단계 파이프라인을 스트리밍 방식으로 실행합니다."""
         print(f"[NOTEBOOKLM_SERVICE] Starting draft stream for document: {document_id}")
         notebook_id = None
@@ -157,136 +169,134 @@ class NotebookLMService:
                     if os.path.exists(brief_path):
                         os.remove(brief_path)
 
-            # Phase 2: Optimize Query
-            print(f"[NOTEBOOKLM_SERVICE] Phase 2 - Optimizing search query")
-            yield json.dumps({"phase": 2, "status": "Phase 2: 최적의 리서치 쿼리 생성 중..."})
-            # 태그를 사용하도록 유도하여 파싱 안정성 확보
-            opt_query_prompt = (
-                "업로드된 사업계획서 양식과 사업 아이디어를 완벽하게 뒷받침할 객관적이고 균형 잡힌 "
-                "근거 자료(시장/기술/정책)를 찾기 위해, Deep Research에 입력할 가장 완벽한 '검색용 프롬프트' 1개만 작성해 줘. "
-                "반드시 [SEARCH_QUERY]태그 사이에 검색어만 넣어줘."
-            )
-            query_res = await self._run_command(["notebook", "query", notebook_id, opt_query_prompt])
-            
-            raw_output = query_res.get("output", "").strip()
-            optimal_query = ""
-            
-            # 1. [SEARCH_QUERY] 태그 추출 시도
-            tag_match = re.search(r"\[SEARCH_QUERY\](.*?)\[/SEARCH_QUERY\]", raw_output, re.DOTALL)
-            if tag_match:
-                optimal_query = tag_match.group(1).strip()
-            
-            # 2. 실패 시 "입력용 프롬프트" 이후 내용 추출 시도 (기존 답변 형식 대응)
-            if not optimal_query:
-                keyword_match = re.search(r"입력용 프롬프트\]\*\*\s*[\n\r]*(.*?)[\n\r]*(\*\*\*|###|$)", raw_output, re.DOTALL)
-                if keyword_match:
-                    optimal_query = keyword_match.group(1).strip()
-            
-            # 3. 실패 시 JSON 파싱 시도 (NotebookLM이 JSON으로 답하는 경우 대비)
-            if not optimal_query:
-                try:
-                    json_match = re.search(r"(\{.*\})", raw_output, re.DOTALL)
-                    if json_match:
-                        json_data = json.loads(json_match.group(1))
-                        val = json_data.get("value", {})
-                        if isinstance(val, dict):
-                            optimal_query = val.get("answer", raw_output)
+            # Phase 2 & 3: Research Execution (Idempotency Check)
+            # 요청한 리서치 모드가 기존에 성공했던 모드와 동일하면 스킵
+            if last_research_mode == research_mode:
+                print(f"[NOTEBOOKLM_SERVICE] Skipping Phase 2 & 3 - Research mode '{research_mode}' already completed.")
+                yield json.dumps({
+                    "phase": 3, 
+                    "status": f"Phase 2 & 3 Skip: 기존 {research_mode.upper()} 리서치 결과가 유효하여 재사용합니다.",
+                    "research_completed": True
+                })
+            else:
+                # Phase 2: Optimize Query
+                print(f"[NOTEBOOKLM_SERVICE] Phase 2 - Optimizing search query")
+                yield json.dumps({"phase": 2, "status": "Phase 2: 최적의 리서치 쿼리 생성 중..."})
+                # 태그를 사용하도록 유도하여 파싱 안정성 확보
+                opt_query_prompt = (
+                    "업로드된 사업계획서 양식과 사업 아이디어를 완벽하게 뒷받침할 객관적이고 균형 잡힌 "
+                    "근거 자료(시장/기술/정책)를 찾기 위해, Deep Research에 입력할 가장 완벽한 '검색용 프롬프트' 1개만 작성해 줘. "
+                    "반드시 [SEARCH_QUERY]태그 사이에 검색어만 넣어줘."
+                )
+                query_res = await self._run_command(["notebook", "query", notebook_id, opt_query_prompt])
+                
+                raw_output = query_res.get("output", "").strip()
+                optimal_query = ""
+                
+                # ... (Tag extraction logic remains same) ...
+                tag_match = re.search(r"\[SEARCH_QUERY\](.*?)\[/SEARCH_QUERY\]", raw_output, re.DOTALL)
+                if tag_match:
+                    optimal_query = tag_match.group(1).strip()
+                
+                if not optimal_query:
+                    keyword_match = re.search(r"입력용 프롬프트\]\*\*\s*[\n\r]*(.*?)[\n\r]*(\*\*\*|###|$)", raw_output, re.DOTALL)
+                    if keyword_match:
+                        optimal_query = keyword_match.group(1).strip()
+                
+                if not optimal_query:
+                    try:
+                        json_match = re.search(r"(\{.*\})", raw_output, re.DOTALL)
+                        if json_match:
+                            json_data = json.loads(json_match.group(1))
+                            val = json_data.get("value", {})
+                            optimal_query = val.get("answer", raw_output) if isinstance(val, dict) else raw_output
                         else:
                             optimal_query = raw_output
-                    else:
+                    except:
                         optimal_query = raw_output
-                except:
-                    optimal_query = raw_output
-            
-            # 4. 정리: 너무 길면 명령행 에러가 날 수 있으므로 요약/절삭하고 특수문자 정제
-            # 줄바꿈 제거, 따옴표 치환, 길이 제한(1000자)
-            optimal_query = optimal_query.replace("\n", " ").replace('"', "'").strip()
-            if len(optimal_query) > 1000:
-                optimal_query = optimal_query[:1000] + "..."
-            
-            if not optimal_query:
-                optimal_query = f"{document_id} 사업계획서 시장 및 기술 분석" # 폴백 쿼리
-            
-            print(f"[NOTEBOOKLM_SERVICE] Optimized query: {optimal_query[:50]}...")
-            
-            # Phase 3: Deep Research
-            print(f"[NOTEBOOKLM_SERVICE] Phase 3 - Starting {research_mode} research")
-            yield json.dumps({"phase": 3, "status": f"Phase 3: {research_mode.capitalize()} Research 시작 ('{optimal_query[:30]}...')"})
-            research_start = await self._run_command(["research", "start", optimal_query, "--notebook-id", notebook_id, "--mode", research_mode])
-            task_id = research_start.get("task_id")
-            
-            # Polling research status
-            max_polls = 20 # 약 10분
-            poll_count = 0
-            while poll_count < max_polls:
-                await asyncio.sleep(30)
-                poll_count += 1
-                # status 확인 시에는 JSON 대신 텍스트에서 'Completed' 키워드를 찾음
-                status_res = await self._run_command(["research", "status", notebook_id])
                 
-                output_lower = status_res.get("output", "").lower()
-                print(f"[NOTEBOOKLM_SERVICE] Research status check (poll {poll_count})")
+                optimal_query = optimal_query.replace("\n", " ").replace('"', "'").strip()
+                if len(optimal_query) > 1000:
+                    optimal_query = optimal_query[:1000] + "..."
                 
-                if "completed" in output_lower or "finish" in output_lower or "finish" in status_res.get("output", ""):
-                    yield json.dumps({"phase": 3, "status": "Phase 3: 리서치 완료. 소스 반입 시작..."})
+                if not optimal_query:
+                    optimal_query = f"{document_id} 사업계획서 시장 및 기술 분석"
+                
+                print(f"[NOTEBOOKLM_SERVICE] Optimized query: {optimal_query[:50]}...")
+                
+                # Phase 3: Research
+                print(f"[NOTEBOOKLM_SERVICE] Phase 3 - Starting {research_mode} research")
+                yield json.dumps({"phase": 3, "status": f"Phase 3: {research_mode.capitalize()} Research 시작 ('{optimal_query[:30]}...')"})
+                research_start = await self._run_command(["research", "start", optimal_query, "--notebook-id", notebook_id, "--mode", research_mode])
+                task_id = research_start.get("task_id")
+                
+                # Polling research status
+                max_polls = 20
+                poll_count = 0
+                while poll_count < max_polls:
+                    await asyncio.sleep(30)
+                    poll_count += 1
+                    status_res = await self._run_command(["research", "status", notebook_id])
+                    output_lower = status_res.get("output", "").lower()
                     
-                    # Backend 동기화 대기 (약간의 여유)
-                    await asyncio.sleep(5)
-                    
-                    # research status에서 나온 task_id가 존재할 경우 우선 사용, 아니면 시작 시점의 task_id 사용
-                    final_task_id = status_res.get("task_id") or task_id
-                    
-                    try:
-                        if final_task_id and final_task_id != "latest":
-                            print(f"[NOTEBOOKLM_SERVICE] Importing research (ID: {final_task_id})")
-                            await self._run_command(["research", "import", notebook_id, final_task_id])
-                        else:
-                            print(f"[NOTEBOOKLM_SERVICE] Importing research (latest)")
-                            await self._run_command(["research", "import", notebook_id]) # 'latest'는 보통 인자 생략 시 동작
-                    except Exception as import_err:
-                        print(f"[NOTEBOOKLM_SERVICE] Import failed, trying fallback: {str(import_err)}")
-                        # fallback: 인자 없이 호출하여 가장 최근 리서치 반입 시도
+                    if "completed" in output_lower or "finish" in output_lower:
+                        yield json.dumps({"phase": 3, "status": "Phase 3: 리서치 완료. 소스 반입 시작..."})
+                        await asyncio.sleep(5)
+                        final_task_id = status_res.get("task_id") or task_id
                         try:
-                            await self._run_command(["research", "import", notebook_id])
-                        except:
-                            print("[NOTEBOOKLM_SERVICE] Fallback import also failed.")
+                            if final_task_id and final_task_id != "latest":
+                                await self._run_command(["research", "import", notebook_id, final_task_id])
+                            else:
+                                await self._run_command(["research", "import", notebook_id])
+                        except Exception as import_err:
+                            print(f"[NOTEBOOKLM_SERVICE] Import failed, fallback: {import_err}")
+                            try:
+                                await self._run_command(["research", "import", notebook_id])
+                            except: pass
                         
-                    break
-                else:
-                    yield json.dumps({"phase": 3, "status": f"Phase 3: 리서치 진행 중 ({poll_count * 30}초 경과...)"})
-            
-            # Phase 4: Persona & Global Rules (글로벌 규칙 설정)
-            # 매번 쿼리에 넣는 것보다 노트북 레벨에 설정하는 것이 훨씬 일관된 결과를 보장함
-            print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring global chat persona and style rules")
-            yield json.dumps({"phase": 4, "status": "Phase 4: 글로벌 작성 규칙(명사형 종결 등) 적용 중..."})
-            
-            global_style_rules = (
-                "당신은 대한민국 최고의 정부지원사업 수석 컨설턴트이자 비즈니스 전략가입니다. "
-                "앞으로의 모든 답변에서 다음의 [🚨절대 작성 규칙🚨]을 무조건적으로 준수하십시오:\n"
-                "1. 모든 문장은 반드시 '~함.', '~임.', '~함.', '~임.'과 같이 **명사형 또는 종결형 종결 어미**로 끝낼 것. 절대 '~입니다', '~한다' 등을 사용하지 마시오.\n"
-                "2. 본문은 반드시 **불렛 포인트( - 또는 * )**를 활용하여 가독성 있게 구조화할 것.\n"
-                "3. **'알겠습니다', '숙지했습니다', '도출했습니다'와 같은 서론, 결론, 부연 설명, 작업 확인 멘트를 절대 작성하지 마.**\n"
-                "4. **본문 내용 중에 [1], [2], [1-3] 등의 출처 표시(Citation)를 절대 포함하지 마.**\n"
-                "5. **요청받은 [작성할 목차] 텍스트를 답변의 시작이나 중간에 절대 반복하여 출력하지 마.** 본문의 실질적인 내용만 바로 시작할 것.\n"
-                "6. **오직 요청받은 단일 항목에 대해서만 작성하고, 이후에 이어질 다른 목차나 주제는 절대 미리 작성하지 마시오.**\n"
-                "7. 표(Table) 작성 요청 시, 제공된 열(Column) 구조를 유지하되 정보량에 따라 행(Row)은 자유롭게 추가할 것.\n"
-                "8. 전문적이고 분석적인 톤앤매너를 유지하며, 구체적인 수치와 근거를 포함하여 작성할 것."
-            )
+                        # 리서치 성공 시 시그널 전송 (상위에서 DB 저장용)
+                        yield json.dumps({"research_completed": True, "research_mode": research_mode})
+                        break
+                    else:
+                        yield json.dumps({"phase": 3, "status": f"Phase 3: 리서치 진행 중 ({poll_count * 30}초 경과...)"})
 
             
-            try:
-                # nlm chat configure 를 통해 노트북 전체에 규칙 주입
-                await self._run_command([
-                    "chat", "configure", notebook_id,
-                    "--goal", "custom",
-                    "--prompt", global_style_rules,
-                    "--response-length", "longer"
-                ])
-                print("[NOTEBOOKLM_SERVICE] Global chat configuration (chat configure) applied successfully.")
-            except Exception as e:
-                print(f"[NOTEBOOKLM_SERVICE] Warning: Failed to configure global chat settings: {e}")
-                # Fallback: 기존처럼 query로 주입 시도
-                await self._run_command(["notebook", "query", notebook_id, global_style_rules])
+            # Phase 4: Persona & Global Rules (Idempotency Check)
+            if has_persona:
+                print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Skipping persona injection (already set)")
+                yield json.dumps({"phase": 4, "status": "Phase 4 Skip: 글로벌 작성 규칙이 이미 적용되어 있습니다."})
+            else:
+                print(f"[NOTEBOOKLM_SERVICE] Phase 4 - Configuring global chat persona and style rules")
+                yield json.dumps({"phase": 4, "status": "Phase 4: 글로벌 작성 규칙(명사형 종결 등) 적용 중..."})
+                
+                global_style_rules = """당신은 대한민국 최고의 정부지원사업 수석 컨설턴트이자 비즈니스 전략가입니다. 
+앞으로의 모든 답변에서 다음의 [절대 작성 규칙]을 무조건적으로 준수하십시오:
+
+1. 모든 문장은 반드시 '~함.', '~임.'과 같이 **명사형 또는 종결형 종결 어미**로 끝낼 것. 절대 '~입니다', '~한다' 등을 사용하지 마시오.
+2. 본문은 반드시 **불렛 포인트( - 또는 * )**를 활용하여 가독성 있게 구조화할 것.
+3. **'알겠습니다', '숙지했습니다', '도출했습니다'와 같은 서론, 결론, 부연 설명, 작업 확인 멘트를 절대 작성하지 마.**
+4. **본문 내용 중에 [1], [2], [1-3] 등의 출처 표시(Citation)를 절대 포함하지 마.**
+5. **요청받은 [작성할 목차] 텍스트를 답변의 시작이나 중간에 절대 반복하여 출력하지 마.** 본문의 실질적인 내용만 바로 시작할 것.
+6. **오직 요청받은 단일 항목에 대해서만 작성하고, 이후에 이어질 다른 목차나 주제는 절대 미리 작성하지 마시오.**
+7. 표(Table) 작성 요청 시, 제공된 열(Column) 구조를 유지하되 정보량에 따라 행(Row)은 자유롭게 추가할 것.
+8. 전문적이고 분석적인 톤앤매너를 유지하며, 구체적인 수치와 근거를 포함하여 작성할 것."""
+                
+                try:
+                    # nlm chat configure 를 통해 노트북 전체에 규칙 주입
+                    await self._run_command([
+                        "chat", "configure", notebook_id,
+                        "--goal", "custom",
+                        "--prompt", global_style_rules,
+                        "--response-length", "longer"
+                    ])
+                    print("[NOTEBOOKLM_SERVICE] Global chat configuration applied successfully.")
+                    yield json.dumps({"persona_injected": True})
+                except Exception as e:
+                    print(f"[NOTEBOOKLM_SERVICE] Warning: Failed to configure global chat settings: {e}")
+                    # Fallback: 기존처럼 query로 주입 시도
+                    await self._run_command(["notebook", "query", notebook_id, global_style_rules])
+                    yield json.dumps({"persona_injected": True})
+
 
 
             # Phase 5: Recursive Drafting
@@ -302,8 +312,14 @@ class NotebookLMService:
                         table_metadata = node.get("tableMetadata")
                         node_type = node.get("type")
 
+                        if node.get("draft_content") and str(node.get("draft_content")).strip():
+                            print(f"[NOTEBOOKLM_SERVICE] Skipping section: {title} (already exists)")
+                            yield json.dumps({"phase": 5, "status": f"스킵: {title} (이미 작성됨)"})
+                            continue
+
                         print(f"[NOTEBOOKLM_SERVICE] Drafting section: {title}")
                         yield json.dumps({"phase": 5, "status": f"작성 중: {title}"})
+
                         
                         # [쿼리 문자열 생성 동적 로직]
                         prompt_parts = [f"작성할 목차: [{title}]\n"]
@@ -322,8 +338,8 @@ class NotebookLMService:
                                 f"  단, **열(Column)의 개수와 구조는 반드시 유지하되, 정보의 양에 맞추어 행(Row)은 자유롭게 무제한으로 추가해서 작성해.**\n"
                                 f"  주의: 오직 이 표 하나만 작성하고, 다른 표나 섹션을 추가로 작성하지 마시오.\n"
                             )
-                        
-                        prompt_parts.append("\n설정된 [절대 작성 규칙]을 엄수하여 오직 이 항목의 **본문만** 상세히 작성해 줘.")
+                        else:
+                            prompt_parts.append("\n설정된 [절대 작성 규칙]을 엄수하여 오직 이 항목의 **본문만** 상세히 작성해 줘.")
 
 
                         

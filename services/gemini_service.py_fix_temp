@@ -1,0 +1,43 @@
+import json
+import re
+from typing import List, AsyncGenerator
+
+# (기존 imports 유지)
+from google import genai
+from google.genai import types
+
+def _reconstruct_tree_from_json(json_text: str) -> List[dict]:
+    """JSON 텍스트를 파싱하여 계층 구조 트리를 복구합니다."""
+    # 1. 전처리: 마크다운 코드 블록 제거 및 순수 JSON 추출
+    clean_text = json_text.strip()
+    
+    # 정규표현식으로 첫 번째 { 로 시작해서 마지막 } 로 끝나는 부분만 추출 시도
+    # AI가 텍스트를 덧붙이거나 중복 출력을 하는 경우를 방어
+    match = re.search(r'(\{.*\})', clean_text, re.DOTALL)
+    if match:
+        clean_text = match.group(1)
+    
+    try:
+        raw_data = json.loads(clean_text)
+        
+        # 2. 데이터 형식 정규화 (dict 또는 list 대응)
+        data_list = []
+        if isinstance(raw_data, dict):
+            if "nodes" in raw_data: 
+                data_list = raw_data["nodes"]
+            elif "tree" in raw_data: 
+                data_list = raw_data["tree"]
+            else: 
+                data_list = [raw_data]
+        elif isinstance(raw_data, list):
+            data_list = raw_data
+            
+        return data_list
+
+    except json.JSONDecodeError as pe:
+        print(f"[GEMINI] JSON 파싱 실패: {pe}")
+        print(f"[GEMINI] 원본 텍스트 요약: {clean_text[:100]}...")
+        # 파싱 실패 시 무한 루프 방지를 위해 빈 리스트 대신 예외를 던짐
+        raise pe
+
+# (이후 기존 함수들 유지...)

@@ -1,8 +1,10 @@
+from lxml import etree
 import zipfile
 import os
-import xml.etree.ElementTree as ET
 import shutil
 import re
+import tempfile
+import copy
 
 # HWPX Namespaces
 NS = {
@@ -12,241 +14,158 @@ NS = {
     'hs': 'http://www.hancom.co.kr/hwpml/2011/section',
 }
 
-def parse_markdown_table(text: str):
-    """마크다운 본문에서 일반 텍스트와 표 데이터를 분리합니다."""
-    lines = text.split('\n')
-    normal_lines = []
-    table_data = [] # 2D array
-    
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('|') and stripped.endswith('|'):
-            if '---' in stripped:
-                continue
-            cells = [c.strip() for c in stripped.split('|')[1:-1]]
-            table_data.append(cells)
-        else:
-            if stripped:
-                normal_lines.append(line)
-    return normal_lines, table_data
-
-def create_p_element(text: str, is_title: bool = False):
-    """문자열을 HWPX 문단(hp:p) 엘리먼트로 변환합니다."""
-    p = ET.Element(f"{{{NS['hp']}}}p")
-    run = ET.SubElement(p, f"{{{NS['hp']}}}run")
-    t = ET.SubElement(run, f"{{{NS['hp']}}}t")
-    t.text = text
-    return p
-
-def get_para_text(p_elem):
-    return "".join(p_elem.itertext()).strip()
-
-def normalize_text(text: str):
-    return re.sub(r'\s+', '', text)
-
 def clean_markdown_formatting(text: str) -> str:
     """HWPX 본문에 넣기 부적절한 마크다운 꾸밈 기호를 제거합니다."""
-    # 볼드체 제거
-    text = text.replace('**', '')
-    # 해시태그 형태의 제목 제거
+    if not text: return ""
+    text = text.replace('**', '').replace('__', '').replace('*', '').replace('_', '')
     text = re.sub(r'^#+\s*', '', text)
     return text.strip()
 
-def is_duplicate_title(line: str, original_title: str) -> bool:
-    """초안 텍스트의 한 줄이 기존 양식의 제목을 단순히 반복하는 것인지 판별합니다."""
-    norm_title = normalize_text(original_title)
-    # 괄호나 마크다운 기호를 없앤 뒤 비교
-    clean_line = re.sub(r'[\*\[\]]', '', line)
-    norm_line = normalize_text(clean_line)
+def inject_text_to_tc(tc_elem, text):
+    """표의 셀(<hp:tc>) 내부에 텍스트를 중첩 없이 주입합니다."""
+    sublist = tc_elem.find('hp:subList', namespaces=NS)
+    if sublist is None: return
+
+    # 기존 문단들 완전히 제거 (안내 문구 삭제)
+    for p in sublist.xpath('./hp:p', namespaces=NS):
+        sublist.remove(p)
+
+    # 새 텍스트를 문단 단위로 주입
+    lines = text.split('\n')
+    for line in lines:
+        if not line.strip(): continue
+        p = etree.SubElement(sublist, f"{{{NS['hp']}}}p")
+        run = etree.SubElement(p, f"{{{NS['hp']}}}run")
+        t = etree.SubElement(run, f"{{{NS['hp']}}}t")
+        t.text = str(line)
+
+def get_node_by_address(root, address: str):
+    """인덱스 기반 주소를 XPath로 변환하여 노드를 찾습니다."""
+    if not address or '/' not in address:
+        return None
     
-    if norm_line and norm_title and (norm_line == norm_title or norm_title in norm_line):
-        # 단순히 제목만 포함하는 라인인지 길이 차이로 검증
-        if len(norm_line) <= len(norm_title) + 5:
-            return True
-    return False
+    parts = address.split('/')
+    xpath_parts = parts[2:] # "Contents/section0.xml" 제외
+    
+    try:
+        # p[idx] -> hp:p[idx+1] 변환
+        def to_xpath_node(p):
+            tag_match = re.match(r"([a-z]+)\[(\d+)\]", p)
+            if tag_match:
+                tag, idx = tag_match.groups()
+                return f"hp:{tag}[{int(idx) + 1}]"
+            return f"hp:{p}"
+
+        refined_xpath = "./" + "/".join([to_xpath_node(p) for p in xpath_parts])
+        nodes = root.xpath(refined_xpath, namespaces=NS)
+        return nodes[0] if nodes else None
+    except Exception as e:
+        print(f"[HWPX] XPath query failed ({address}): {e}")
+        return None
 
 def generate_hwpx_from_draft(document_id: str, tree_data: list, output_path: str):
     """
-    원본 HWPX를 템플릿으로 사용하여 초안 내용을 기존 양식과 문단 레이아웃을 훼손하지 않고 삽입하는 새 문서를 생성합니다.
+    물리적 인덱스 매핑을 사용하여 템플릿의 정확한 위치에 초안을 주입합니다.
     """
     upload_dir = "uploads"
     template_path = None
     
-    # 1. 원본 템플릿 탐색 (가장 초기에 업로드 된 순수한 HWPX)
     if os.path.exists(upload_dir):
         candidates = [f for f in os.listdir(upload_dir) if f.startswith(document_id) and f.endswith(".hwpx") and not f.endswith("_draft.hwpx")]
         if candidates:
             template_path = os.path.join(upload_dir, candidates[0])
 
     if not template_path:
-        print(f"[HWPX] Template not found for {document_id}. Original HWPX required.")
+        print(f"[HWPX] Template not found for {document_id}")
         return False
 
-    # 제목-내용 매핑 딕셔너리 구성 (정규화된 문자열을 키로 사용)
-    content_map = {}
-    table_map = {}
-    def extract_contents(nodes):
-        for node in nodes:
-            node_type = node.get('type', 'heading')
-            title = node.get('title', '').strip()
-            content = node.get('draft_content', '').strip()
-            table_meta = node.get('tableMetadata')
-            
-            if node_type == 'table' and table_meta and isinstance(table_meta, dict) and 'table_index' in table_meta:
-                idx = table_meta['table_index']
-                table_map[idx] = {
-                    "original_title": title,
-                    "content": content,
-                    "metadata": table_meta
-                }
-            elif title and content and node_type != 'table':
-                content_map[normalize_text(title)] = {
-                    "original_title": title,
-                    "content": content,
-                    "type": node_type
-                }
-            
-            if node.get('children'):
-                extract_contents(node['children'])
-                
-    extract_contents(tree_data)
-
+    temp_dir = tempfile.mkdtemp()
     try:
-        # 2. ZIP 패키지 조작을 통해 원본 구조 유지
         with zipfile.ZipFile(template_path, 'r') as zin:
-            with zipfile.ZipFile(output_path, 'w') as zout:
-                for item in zin.infolist():
-                    if item.filename == 'Contents/section0.xml':
-                        original_xml = zin.read(item.filename)
-                        
-                        for prefix, uri in NS.items():
-                            ET.register_namespace(prefix, uri)
-                        
-                        root = ET.fromstring(original_xml)
-                        inserted_keys = set()
-                        current_table_idx = 0
-                        
-                        def process_element(parent_elem):
-                            nonlocal current_table_idx
-                            i = 0
-                            while i < len(parent_elem):
-                                child = parent_elem[i]
-                                tag = child.tag.split('}')[-1]
-                                
-                                if tag == 'tbl':
-                                    tbl_idx = current_table_idx
-                                    current_table_idx += 1
-                                    
-                                    if tbl_idx in table_map:
-                                        t_info = table_map[tbl_idx]
-                                        sub_content = t_info["content"]
-                                        _, table_data = parse_markdown_table(sub_content)
-                                        
-                                        if table_data:
-                                            target_tbl = child
-                                            trs = list(target_tbl.iter(f"{{{NS['hc']}}}tr"))
-                                            last_tr_template = trs[-1] if trs else None
-                                            
-                                            for r_idx, md_row in enumerate(table_data):
-                                                if r_idx < len(trs):
-                                                    tr = trs[r_idx]
-                                                else:
-                                                    if last_tr_template is not None:
-                                                        import copy
-                                                        tr = copy.deepcopy(last_tr_template)
-                                                        for temp_tc in tr.iter(f"{{{NS['hc']}}}tc"):
-                                                            temp_ts = list(temp_tc.iter(f"{{{NS['hp']}}}t"))
-                                                            if temp_ts:
-                                                                temp_ts[0].text = ""
-                                                                for t_node in temp_ts[1:]:
-                                                                    t_node.text = ""
-                                                        target_tbl.append(tr)
-                                                        if 'rowCnt' in target_tbl.attrib:
-                                                            row_cnt = int(target_tbl.attrib['rowCnt'])
-                                                            target_tbl.set('rowCnt', str(row_cnt + 1))
-                                                    else:
-                                                        continue
-                                                        
-                                                tcs = list(tr.iter(f"{{{NS['hc']}}}tc"))
-                                                for c_idx, md_cell in enumerate(md_row):
-                                                    if c_idx < len(tcs):
-                                                        tc = tcs[c_idx]
-                                                        orig_text = "".join(tc.itertext()).strip()
-                                                        if md_cell and md_cell != orig_text:
-                                                            clean_val = clean_markdown_formatting(md_cell)
-                                                            ts = list(tc.iter(f"{{{NS['hp']}}}t"))
-                                                            if ts:
-                                                                ts[0].text = clean_val
-                                                                for t_node in ts[1:]:
-                                                                    t_node.text = ""
-                                                            else:
-                                                                ps = list(tc.iter(f"{{{NS['hp']}}}p"))
-                                                                if ps:
-                                                                    run = ET.SubElement(ps[-1], f"{{{NS['hp']}}}run")
-                                                                    t_new = ET.SubElement(run, f"{{{NS['hp']}}}t")
-                                                                    t_new.text = clean_val
-                                
-                                process_element(child)
-                                
-                                if tag == 'p':
-                                    para_text = get_para_text(child)
-                                    if para_text.strip():
-                                        norm_text = normalize_text(para_text)
-                                        matched_key = None
-                                        
-                                        for key in content_map.keys():
-                                            if key not in inserted_keys and len(norm_text) > 2:
-                                                if key == norm_text or key in norm_text or norm_text in key:
-                                                    matched_key = key
-                                                    break
-                                                    
-                                        if matched_key:
-                                            inserted_keys.add(matched_key)
-                                            content_info = content_map[matched_key]
-                                            sub_content = content_info["content"]
-                                            original_title = content_info["original_title"]
-                                            
-                                            normal_lines, _ = parse_markdown_table(sub_content)
-                                            
-                                            filtered_lines = []
-                                            for line in normal_lines:
-                                                if not is_duplicate_title(line, original_title):
-                                                    clean_line = clean_markdown_formatting(line)
-                                                    if clean_line:
-                                                        filtered_lines.append(clean_line)
-                                            
-                                            for idx, line in enumerate(filtered_lines):
-                                                new_p = create_p_element(line)
-                                                parent_elem.insert(i + 1 + idx, new_p)
-                                                
-                                            i += len(filtered_lines)
-                                            
-                                i += 1
-                                
-                        process_element(root)
-                        
-                        unmatched_keys = set(content_map.keys()) - inserted_keys
-                        if unmatched_keys:
-                            root.append(create_p_element("=== [참고용: 템플릿에 매핑되지 않은 추가 내용] ===", is_title=True))
-                            for key in unmatched_keys:
-                                content_info = content_map[key]
-                                sub_content = content_info["content"]
-                                original_title = content_info["original_title"]
-                                
-                                lines = sub_content.split('\n')
-                                for line in lines:
-                                    if line.strip() and not is_duplicate_title(line, original_title):
-                                        clean_line = clean_markdown_formatting(line)
-                                        if clean_line:
-                                            root.append(create_p_element(clean_line))
-
-                        new_xml = ET.tostring(root, encoding='utf-8', xml_declaration=True)
-                        zout.writestr(item, new_xml)
-                    else:
-                        zout.writestr(item, zin.read(item.filename))
+            zin.extractall(temp_dir)
+            
+        section_mapping = {} 
         
-        print(f"[HWPX] Successfully generated with template layout: {output_path}")
+        def collect_nodes(nodes):
+            for node in nodes:
+                addr = node.get('node_address')
+                content = node.get('draft_content')
+                if addr and content:
+                    sec_file = addr.split('/')[1]
+                    if sec_file not in section_mapping:
+                        section_mapping[sec_file] = []
+                    section_mapping[sec_file].append(node)
+                if node.get('children'):
+                    collect_nodes(node['children'])
+        
+        collect_nodes(tree_data)
+
+        # 각 섹션 파일 수정
+        for sec_file in section_mapping.keys():
+            sec_path = os.path.join(temp_dir, 'Contents', sec_file)
+            if not os.path.exists(sec_path): continue
+                
+            parser = etree.XMLParser(remove_blank_text=False)
+            tree = etree.parse(sec_path, parser)
+            root = tree.getroot()
+            
+            # 주입 작업 (문서 구조 변화를 방지하기 위해 각 위치에 독립적으로 주입)
+            for node in section_mapping[sec_file]:
+                target_node = get_node_by_address(root, node['node_address'])
+                if target_node is None: continue
+                
+                content = node['draft_content']
+                node_type = node.get('type', 'heading')
+                
+                if node_type == 'table' or etree.QName(target_node).localname == 'tbl':
+                    tcs = target_node.xpath('.//hp:tc', namespaces=NS)
+                    if tcs:
+                        inject_text_to_tc(tcs[0], clean_markdown_formatting(content))
+                else:
+                    # 일반 문단: 제목 바로 뒤에 삽입
+                    parent = target_node.getparent()
+                    if parent is not None:
+                        idx = list(parent).index(target_node)
+                        lines = content.split('\n')
+                        # 글자 겹침 방지 전략: 
+                        # 1. 제목 노드를 복제하되 내부 구조를 완전히 비움(Clear)
+                        # 2. 깨끗한 노드에 주입하여 스타일은 유지하고 데이터만 변경
+                        for offset, line in enumerate(lines):
+                            if not line.strip(): continue
+                            new_p = copy.deepcopy(target_node)
+                            
+                            # ID 및 기존 텍스트 노드 제거 (중첩 방지 핵심)
+                            if 'id' in new_p.attrib: del new_p.attrib['id']
+                            for attr in list(new_p.attrib):
+                                if attr.endswith('id'): del new_p.attrib[attr]
+                            
+                            # 내부 요소 청소 및 새 텍스트 필드 생성
+                            for run in new_p.xpath('.//hp:run', namespaces=NS):
+                                for t in run.xpath('.//hp:t', namespaces=NS):
+                                    t.text = clean_markdown_formatting(line)
+                                    # 첫 번째 텍스트 노드에만 내용을 넣고 나머지는 삭제
+                                    line = "" 
+                            
+                            parent.insert(idx + 1 + offset, new_p)
+
+            tree.write(sec_path, encoding='utf-8', xml_declaration=True)
+
+        # HWPX 재압축
+        with zipfile.ZipFile(output_path, 'w') as zf:
+            mimetype_path = os.path.join(temp_dir, "mimetype")
+            if os.path.exists(mimetype_path):
+                zf.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
+            for root_dir, _, files in os.walk(temp_dir):
+                for file in files:
+                    fpath = os.path.join(root_dir, file)
+                    arcname = os.path.relpath(fpath, temp_dir)
+                    if arcname == "mimetype": continue
+                    zf.write(fpath, arcname, compress_type=zipfile.ZIP_DEFLATED)
+                        
         return True
     except Exception as e:
-        print(f"[HWPX] Template-Based Generation Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
+    finally:
+        shutil.rmtree(temp_dir)

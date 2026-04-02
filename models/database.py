@@ -30,6 +30,8 @@ class Project(Base):
     master_brief = Column(String, nullable=True) # 아이디어 고도화 결과 저장 (Master Brief)
     initial_idea = Column(String, nullable=True) # 자유입력/가이드입력 탭 상태 보존
     notebook_id = Column(String, nullable=True) # 생성된 NotebookLM ID 기록
+    research_mode = Column(String, nullable=True) # 마지막 성공한 리서치 모드 (fast/deep)
+    persona_injected = Column(Integer, default=0) # 페르소나/글로벌 규칙 주입 여부 (0: No, 1: Yes)
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"

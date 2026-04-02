@@ -141,6 +141,17 @@ export const api = {
     return response.json();
   },
 
+  saveProjectDraftReset: async (documentId: string) => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/reset`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Reset failed: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
   enhanceIdea: async (documentId: string, ideaText: string, modelId: string = "models/gemini-3.1-pro-preview") => {
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance`, {
       method: 'POST',
@@ -232,8 +243,8 @@ export const api = {
     return response.json();
   },
 
-  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', onProgress: (msg: string) => void) => {
-    console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode})`);
+  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', engine: 'lxml' | 'pyhwpx' = 'lxml', onProgress: (msg: string) => void) => {
+    console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode}, Engine: ${engine})`);
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/generate`, {
       method: 'POST',
       headers: {
@@ -242,7 +253,8 @@ export const api = {
       body: JSON.stringify({
         document_id: documentId,
         model_id: modelId,
-        research_mode: researchMode
+        research_mode: researchMode,
+        engine: engine
       }),
     });
 
@@ -295,6 +307,12 @@ export const api = {
               if (data.status === 'completed') {
                 console.log("[API] Success mark found. Saving finalTree.");
                 finalTree = data.tree;
+              } else if (data.research_completed) {
+                // 리서치 스킵/완료 시에도 상태 메시지 표시용
+                onProgress(`리서치 상태 확인 완료: ${data.research_mode || researchMode}`);
+              } else if (data.persona_injected) {
+                // 페르소나 주입 완료 시
+                onProgress("작성 규칙(페르소나) 설정 완료");
               } else if (data.status) {
                 onProgress(data.status);
               } else if (data.phase_status) {
@@ -305,6 +323,7 @@ export const api = {
             }
           }
         }
+
       }
     } catch (err) {
       console.error("[API] ERROR during stream reading:", err);
@@ -416,10 +435,10 @@ export const api = {
     return result;
   },
 
-  exportHwpx: async (documentId: string) => {
-    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx`);
+  exportHwpx: async (documentId: string, engine: 'lxml' | 'pyhwpx' = 'lxml') => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx?engine=${engine}`);
     if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
         throw new Error(errorData.detail || `Export failed: ${response.statusText}`);
     }
     const data = await response.json();

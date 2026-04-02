@@ -323,6 +323,7 @@ function App() {
         {activeView === 'analysis' ? (
           <div className="block flex-1 flex-col relative">
             <AnalysisWorkflow 
+                key={currentDocumentId || 'new_project'}
                 initialTreeData={treeData} 
                 initialMasterBrief={initialMasterBrief}
                 initialIdeaData={initialIdeaData}

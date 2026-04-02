@@ -17,6 +17,7 @@ from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
 from services.notebooklm_service import notebooklm_service
 from services.hwpx_service import generate_hwpx_from_draft
+from services.pyhwpx_service import generate_hwpx_with_pyhwpx
 
 router = APIRouter(prefix="/api", tags=["Projects"])
 
@@ -582,6 +583,7 @@ async def export_project(document_id: str, db: Session = Depends(get_db)):
                     "title": n.get("title", "제목 없음"),
                     "type": n.get("type", "heading"),
                     "content": node_id in content_set,
+                    "node_address": n.get("node_address"), # 물리 주소 보존
                     "tableMetadata": n.get("tableMetadata"),
                     "writingGuide": n.get("writingGuide"),
                     "userInstruction": n.get("userInstruction"),
@@ -686,6 +688,7 @@ async def generate_draft_stream(
         print(f"[BACKEND] SSE event_generator started for {document_id}")
         try:
             # NotebookLMService를 통해 5단계 파이프라인 실행
+            # 스마트 재개 로직: 기존 DB 상태(notebook_id, research_mode, persona_injected)를 서비스에 전달
             async for progress in notebooklm_service.generate_draft_stream(
                 document_id=document_id,
                 master_brief=master_brief,
@@ -693,18 +696,34 @@ async def generate_draft_stream(
                 pdf_path=pdf_path,
                 research_mode=request.research_mode,
                 project_name=project.name,
-                existing_notebook_id=project.notebook_id
+                existing_notebook_id=project.notebook_id,
+                last_research_mode=project.research_mode,
+                has_persona=bool(project.persona_injected)
             ):
                 print(f"[BACKEND] SSE Yielding progress: {progress[:100]}")
                 data = json.loads(progress)
                 
-                # notebook_id가 반환되면 즉시 DB에 저장 (중간 중단 대비)
+                # 1. notebook_id가 반환되면 즉시 DB에 저장 (중간 중단 대비)
                 if data.get("notebook_id") and data.get("notebook_id") != project.notebook_id:
                     print(f"[BACKEND] New notebook_id discovered: {data.get('notebook_id')}. Saving to DB.")
                     project.notebook_id = data.get("notebook_id")
                     db.commit()
 
-                # 성공적으로 완료된 경우 DB에 트리 업데이트
+                # 2. 리서치 완료 시 상태 업데이트 (idempotency)
+                if data.get("research_completed"):
+                    # 리서치가 새로 완료되었거나 스킵되었을 때 모드 저장
+                    mode = data.get("research_mode", request.research_mode)
+                    print(f"[BACKEND] Research status updated to: {mode}")
+                    project.research_mode = mode
+                    db.commit()
+
+                # 3. 페르소나 주입 완료 시 상태 업데이트
+                if data.get("persona_injected"):
+                    print(f"[BACKEND] Persona injection status: Done")
+                    project.persona_injected = 1
+                    db.commit()
+
+                # 4. 성공적으로 완료된 경우 DB에 최종 트리 업데이트
                 if data.get("status") == "completed":
                     final_tree = data.get("tree")
                     if final_tree:
@@ -713,7 +732,8 @@ async def generate_draft_stream(
                         db.commit()
                 
                 yield f"data: {progress}\n\n"
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
+
         except Exception as e:
             print(f"[BACKEND] SSE FATAL ERROR: {str(e)}")
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
@@ -724,7 +744,7 @@ async def generate_draft_stream(
 
 
 @router.get("/projects/{document_id}/export_hwpx")
-async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
+async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -743,14 +763,14 @@ async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
     output_filename = f"{document_id}_draft.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
+    # 신규 구조적 매핑 엔진(LXML)으로 일원화
+    print(f"[BACKEND] Exporting {document_id} using structural mapping engine...")
     success = generate_hwpx_from_draft(document_id, tree_data, output_path)
     
     if not success:
-        # 템플릿이 없거나 생성 실패한 경우 (PDF 기반 등) 
-        # TODO: 빈 템플릿 기반 생성 로직 보완 예정
-        raise HTTPException(status_code=500, detail="Failed to generate HWPX file. Original template may be missing.")
+        # 생성 실패 시 에러 보고
+        raise HTTPException(status_code=500, detail="HWPX 파일 생성 중 오류가 발생했습니다. 원본 템플릿과의 매핑이 올바르지 않을 수 있습니다.")
         
-    # 다운로드할 수 있는 상대 경로 반환 (또는 FileResponse 가능)
     return {
         "status": "success", 
         "download_url": f"/api/projects/download/{output_filename}",
@@ -765,6 +785,21 @@ async def download_project_file(filename: str):
         
     from fastapi.responses import FileResponse
     return FileResponse(filepath, filename=filename)
+
+@router.post("/projects/{document_id}/draft/reset")
+async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
+    """작업 초기화를 위해 프로젝트의 NotebookLM 진행 상태를 리셋합니다."""
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    project.notebook_id = None
+    project.research_mode = None
+    project.persona_injected = False
+    project.is_draft_generated = False
+    # 기존 초안 결과물 초기화 여부는 선택 (여기서는 DB 상태만 초기화하여 재실행 유도)
+    db.commit()
+    return {"status": "success", "message": "Drafting state reset successfully"}
 
 @router.delete("/projects/{document_id}")
 async def delete_project(document_id: str, db: Session = Depends(get_db)):

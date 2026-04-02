@@ -121,64 +121,110 @@ def parse_docx(filepath: str) -> list:
 
     return tree
 
+def _apply_address_to_ai_nodes(ai_nodes: list, base_nodes: list):
+    """
+    AI가 분석한 논리 노드 트리(ai_nodes)에 추출된 물리 노드(base_nodes)의 주소를 매핑합니다.
+    제목 유사도를 기반으로 재귀적으로 매핑을 수행합니다.
+    """
+    import difflib
+
+    def get_similarity(s1, s2):
+        return difflib.SequenceMatcher(None, s1.strip(), s2.strip()).ratio()
+
+    def find_best_base_node(target_title, pool):
+        best_match = None
+        highest_score = 0.0
+        for b_node in pool:
+            score = get_similarity(target_title, b_node["title"])
+            if score > highest_score:
+                highest_score = score
+                best_match = b_node
+        return best_match if highest_score > 0.7 else None # 70% 유사도 이상
+
+    def process_recursive(curr_ai_nodes):
+        for ai_node in curr_ai_nodes:
+            # 1. 최적의 매칭 노드 찾기
+            match = find_best_base_node(ai_node["title"], base_nodes)
+            if match:
+                ai_node["node_address"] = match["node_address"]
+                # 매핑된 노드는 pool에서 제거하지 않음 (여러 AI 노드가 참조할 수도 있음)
+            
+            # 2. 자식 노드도 재귀적으로 처리
+            if ai_node.get("children"):
+                process_recursive(ai_node["children"])
+
+    process_recursive(ai_nodes)
+
 def parse_document(filepath: str, model_id: str = "models/gemini-3-flash-preview") -> dict:
     """확장자에 따라 적절한 파서를 호출하여 {nodes, usage} 구조를 반환합니다."""
     ext = filepath.lower().split('.')[-1]
-    
     usage_empty = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     if ext == "docx":
         return {
             "nodes": parse_docx(filepath),
-            "usage": usage_empty # DOCX는 로컬 파싱하므로 AI 사용량 0
+            "usage": usage_empty
         }
     elif ext == "hwpx":
-        from services.hwpx_extractor import extract_hwpx_to_markdown
+        from services.hwpx_extractor import extract_hwpx_with_metadata
         from services.gemini_service import analyze_structure_with_gemini
         
-        # 1. HWPX 원본에서 텍스트/표 마크다운 순차 추출
-        raw_markdown = extract_hwpx_to_markdown(filepath)
+        # 1. HWPX 원본에서 인덱스 기반 정밀 추출 (이미 node_address 포함)
+        extraction_result = extract_hwpx_with_metadata(filepath)
+        raw_markdown = extraction_result["markdown"]
+        base_nodes = extraction_result["nodes"]
+        
         if not raw_markdown:
             return {"nodes": [], "usage": usage_empty}
             
-        # 2. 추출된 데이터를 Gemini API로 넘겨 지능적 계층 트리 반환
-        return analyze_structure_with_gemini(raw_markdown, model_id=model_id)
+        # 2. Gemini AI 분석 (논리적 계층 및 가이드라인 보강)
+        ai_result = analyze_structure_with_gemini(raw_markdown, model_id=model_id)
+        
+        # 3. 재귀적으로 모든 노드에 주소 매핑
+        _apply_address_to_ai_nodes(ai_result["nodes"], base_nodes)
+        
+        return {"nodes": ai_result["nodes"], "usage": ai_result["usage"]}
     else:
-        # 지원하지 않는 포맷
-        return {
-            "nodes": [
-                {
-                    "id": 1,
-                    "title": f"지원하지 않거나 준비 중인 포맷 ({ext})",
-                    "type": "heading",
-                    "children": []
-                }
-            ],
-            "usage": usage_empty
-        }
+        return {"nodes": [], "usage": usage_empty}
 
 async def parse_document_stream(filepath: str, model_id: str = "models/gemini-3-flash-preview"):
-    """확장자에 따라 스트리밍 방식으로 상태를 보고하며 파싱을 수행합니다."""
+    """확장자에 따라 스트리밍 방식으로 상태를 보고하며 파서 호출"""
     ext = filepath.lower().split('.')[-1]
     
     if ext == "hwpx" or ext == "pdf":
-        from services.hwpx_extractor import extract_hwpx_to_markdown
+        from services.hwpx_extractor import extract_hwpx_with_metadata
         from services.gemini_service import analyze_structure_stream
         
-        yield {"status": "extracting", "message": "문서에서 텍스트와 표 구조를 추출하는 중..."}
-        raw_markdown = extract_hwpx_to_markdown(filepath)
+        yield {"status": "extracting", "message": "물리적 인덱스 기반으로 문서 구조를 정밀 분석 중..."}
+        extraction_result = extract_hwpx_with_metadata(filepath)
+        raw_markdown = extraction_result["markdown"]
+        base_nodes = extraction_result["nodes"]
         
         if not raw_markdown:
             yield {"status": "error", "message": "문서 텍스트 추출에 실패했습니다."}
             return
             
-        yield {"status": "extracting_done", "message": "텍스트 추출 완료. Gemini AI 분석 단계로 넘어갑니다."}
+        yield {"status": "extracting_done", "message": "물리 주소 매핑 완료. Gemini AI가 논리적 맥락을 분석합니다."}
         
+        full_ai_data = None
         async for event in analyze_structure_stream(raw_markdown, model_id=model_id):
-            yield event
+            if event["status"] == "completed":
+                full_ai_data = event["data"]
+                # 재귀적으로 모든 AI 노드(자식 포함)에 주소 매핑
+                _apply_address_to_ai_nodes(full_ai_data["nodes"], base_nodes)
+                            
+                yield {
+                    "status": "completed",
+                    "message": "구조적 매핑 완료",
+                    "data": {
+                        "nodes": full_ai_data["nodes"],
+                        "usage": full_ai_data["usage"]
+                    }
+                }
+            else:
+                yield event
             
     elif ext == "docx":
-        yield {"status": "extracting", "message": "DOCX 로컬 분석 중..."}
         nodes = parse_docx(filepath)
         yield {
             "status": "completed", 

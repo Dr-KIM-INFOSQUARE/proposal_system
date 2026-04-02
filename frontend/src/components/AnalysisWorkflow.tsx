@@ -118,6 +118,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
   const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
+  const [hwpxEngine, setHwpxEngine] = useState<'lxml' | 'pyhwpx'>('lxml');
 
   // Step 2 UI States for tabs
   const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
@@ -168,6 +169,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           docId, 
           modelToUse,
           modeToUse,
+          hwpxEngine,
           (msg) => {
             if (props.onEnhanceStateChange) {
                 props.onEnhanceStateChange(true, msg);
@@ -915,6 +917,8 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                </div>
                             </button>
                          </div>
+                         
+
                       </div>
 
                       <div className="text-center">
@@ -1059,67 +1063,102 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 )}
              </div>
 
-             {draftTree.length > 0 && !isGeneratingDraft && (
+             {!isGeneratingDraft && (
                 <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between">
                    <div className="flex items-center gap-4">
                        <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
                           <span className="material-symbols-outlined text-sm">info</span>
-                          수정 사항은 브라우저 세션에 임시 보관 중입니다.
+                          진행에 문제가 있다면 상태를 초기화하세요.
                        </div>
                        <button 
-                           onClick={() => {
-                               if (window.confirm("초안 생성을 처음부터 다시 시작할까요?\n(수동으로 편집한 내용은 모두 삭제됩니다.)")) {
-                                   setDraftTree([]);
-                                   setSelectedNodeId(null);
-                                   setCompletedSteps(prev => (prev || []).filter(s => s !== 3));
+                           onClick={async () => {
+                               if (!props.documentId) return;
+                               if (window.confirm("진행 중인 '초안 작성' 단계의 모든 상태(노트북 ID, 리서치 기록 등)를 완전히 초기화하시겠습니까?\n서버에 저장된 이전 기록이 삭제되어 처음부터 모든 과정을 새로 시작하게 됩니다.")) {
+                                   try {
+                                       await api.saveProjectDraftReset(props.documentId);
+                                       setDraftTree([]);
+                                       setCompletedSteps(prev => (prev || []).filter(s => s !== 3));
+                                       alert("서버 상태가 초기화되었습니다.");
+                                   } catch(err) {
+                                       alert("초기화 실패");
+                                   }
                                }
                            }}
-                           className="flex items-center gap-1.5 px-3 py-1.5 bg-outline-variant/10 hover:bg-error/10 text-[11px] font-bold text-outline hover:text-error rounded-lg transition-all border border-outline-variant/20 hover:border-error/20 cursor-pointer"
-                           title="리서치 모드 선택 화면으로 돌아가서 다시 생성합니다."
+                           className="flex items-center gap-1.5 px-3 py-1.5 bg-error/10 hover:bg-error/20 text-[11px] font-bold text-error rounded-lg transition-all border border-error/20 cursor-pointer"
+                       >
+                           <span className="material-symbols-outlined text-[16px]">refresh</span>
+                           진행 상태 완전 리셋(서버)
+                       </button>
+                       <button 
+                           onClick={() => {
+                               if (window.confirm("현재 화면의 내용을 비울까요?")) {
+                                   setDraftTree([]);
+                               }
+                           }}
+                           className="flex items-center gap-1.5 px-3 py-1.5 bg-outline-variant/10 hover:bg-surface-container-highest text-[11px] font-bold text-outline rounded-lg transition-all border border-outline-variant/20 cursor-pointer"
                        >
                            <span className="material-symbols-outlined text-[16px]">restart_alt</span>
-                           처음부터 다시 시작
+                           화면만 초기화
                        </button>
                    </div>
-                   <button 
-                       onClick={async () => {
-                           if (!props.documentId) return;
-                           try {
-                               const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-                               await api.saveProject(props.documentId, props.fileName || 'Untitled', props.fileName || 'Unknown File', selectedIds, contentIds, draftTree);
-                               handleStepCompletion(3);
-                               setTimeout(() => toggleStep(4), 300);
-                           } catch(err) {
-                               alert("저장 실패: " + err);
-                           }
-                       }}
-                       className="px-6 py-2.5 bg-secondary text-on-secondary text-sm font-black rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center gap-2"
-                   >
-                      <span className="material-symbols-outlined text-lg">check_circle</span>
-                      💾 초안 확정 및 저장 후 다음 단계로
-                   </button>
-                   <button 
-                        onClick={async () => {
-                            if (!props.documentId) return;
-                            try {
-                                const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-                                await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
-                                const data = await api.exportHwpx(props.documentId);
-                                if (data.status === 'success' && data.download_url) {
-                                    window.location.href = data.download_url;
-                                } else {
-                                    alert("파일 생성 실패: " + (data.detail || "알 수 없는 오류"));
-                                }
-                            } catch(err) {
-                                alert("파일 생성 중 오류가 발생했습니다: " + err);
-                            }
-                        }}
-                        className="px-5 py-2.5 ml-3 bg-primary/10 text-primary text-sm font-black rounded-xl border border-primary/20 hover:bg-primary/20 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
-                        title="고도화 단계를 거치지 않고 현재 초안으로 즉시 HWPX 파일을 만듭니다."
-                    >
-                        <span className="material-symbols-outlined text-lg">file_download</span>
-                        HWPX 파일로 즉시 생성
-                    </button>
+                   
+                   {draftTree.length > 0 && (
+                       <div className="flex items-center gap-2">
+                           <button 
+                               onClick={async () => {
+                                   if (!props.documentId) return;
+                                   try {
+                                       const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+                                       await api.saveProject(props.documentId, props.fileName || 'Untitled', props.fileName || 'Unknown File', selectedIds, contentIds, draftTree);
+                                       handleStepCompletion(3);
+                                       setTimeout(() => toggleStep(4), 300);
+                                   } catch(err) {
+                                       alert("저장 실패: " + err);
+                                   }
+                               }}
+                               className="px-6 py-2.5 bg-secondary text-on-secondary text-sm font-black rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center gap-2"
+                           >
+                              <span className="material-symbols-outlined text-lg">check_circle</span>
+                              💾 초안 확정 및 저장
+                           </button>
+
+                           <div className="flex items-center bg-surface-container-low p-1 rounded-xl border border-outline-variant/20 shadow-inner ml-4">
+                               <button 
+                                   onClick={() => setHwpxEngine('lxml')}
+                                   className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center gap-1.5 transition-all ${hwpxEngine === 'lxml' ? 'bg-white text-primary shadow-sm ring-1 ring-primary/10' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                               >
+                                   LXML
+                               </button>
+                               <button 
+                                   onClick={() => setHwpxEngine('pyhwpx')}
+                                   className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center gap-1.5 transition-all ${hwpxEngine === 'pyhwpx' ? 'bg-white text-primary shadow-sm ring-1 ring-primary/10' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                               >
+                                   PyHWPX
+                               </button>
+                           </div>
+                           <button 
+                                onClick={async () => {
+                                    if (!props.documentId) return;
+                                    try {
+                                        const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+                                        await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
+                                        const data = await api.exportHwpx(props.documentId, hwpxEngine);
+                                        if (data.status === 'success' && data.download_url) {
+                                            window.location.href = data.download_url;
+                                        } else {
+                                            alert("실패: " + (data.detail || "알 수 없는 오류"));
+                                        }
+                                    } catch(err) {
+                                        alert("오류: " + err);
+                                    }
+                                }}
+                                className="px-5 py-2.5 bg-primary/10 text-primary text-sm font-black rounded-xl border border-primary/20 hover:bg-primary/20 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                            >
+                                <span className="material-symbols-outlined text-lg">file_download</span>
+                                HWPX 생성
+                            </button>
+                       </div>
+                   )}
                 </div>
              )}
           </div>
