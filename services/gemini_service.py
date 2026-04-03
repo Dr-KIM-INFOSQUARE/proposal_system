@@ -57,7 +57,7 @@ def _get_analysis_prompt(text: str) -> str:
         "     🚨[표 구조화 절대 규칙]🚨 목차 제목(예: '(1) 시장 규모 및 현황') 자체를 `table` 타입으로 지정하지 마십시오. **목차 제목은 무조건 `heading` 또는 `item`으로 설정하고, 실제 표는 해당 목차의 하위 자식 노드(children)로 분리하여 `type: \"table\"`로 생성**해야 합니다. (이때 표 노드의 제목은 '[표] 시장 규모 테이블' 처럼 내용을 유추할 수 있게 임의로 생성하세요.)\n\n"
         
         "3. **표 데이터 구조화 (tableMetadata) - 🚨 중요 🚨**:\n"
-        "   - 노드 타입이 **table**인 경우, 해당 표의 구조를 분석하여 'tableMetadata' 속성에 JSON 객체로 저장하세요.\n"
+        "   - 노드 타입이 **table**인 경우, 해당 표의 구조를 분석하여 'tableMetadata' 속성에 JSON 객체로 **반드시** 저장하세요.\n"
         "   - JSON 구조 예시:\n"
         "     {\n"
         "       \"headers\": [\"항목\", \"내용\", ...],\n"
@@ -67,11 +67,12 @@ def _get_analysis_prompt(text: str) -> str:
         "   - 표의 헤더가 복잡(Row/Col Span 포함)하더라도 최대한 논리적으로 구조화하세요.\n\n"
         
         "4. **❌ 작성 요령의 'item' 오인 방지 (가장 중요) ❌**:\n"
-        "   - AI가 가장 자주 하는 치명적 실수는 안내 문구를 새로운 'item' 노드로 착각하여 생성하는 것입니다. 이를 절대 금지합니다.\n"
-        "   - **[item 생성 절대 금지 조건]**: 텍스트가 다음 중 하나라도 해당하면 절대 새로운 노드(item/heading)로 만들지 마십시오.\n"
+        "   - AI가 가장 자주 하는 치명적 실수는 안내 문구를 새로운 'item' 노드로 착각하여 생성하는 것입니다. 이를 **절대 금지**합니다.\n"
+        "   - 🚨 **[강력 경고]**: 원본 텍스트에 `* **서비스명**`, `* **서비스 내용**` 처럼 별표나 굵은 글씨 마크다운(`**`)이 강조되어 있다고 해서 이를 독립된 하위 목차(item)로 빼지 마십시오! 이는 단지 상위 목차(예: 1-1. 개발 대상 기술의 개요)를 어떻게 써야 하는지 알려주는 가이드라인일 뿐입니다.\n"
+        "   - **[item 생성 절대 금지 조건]**: 텍스트가 다음 중 하나라도 해당하면 절대 새로운 노드로 만들지 말고 상위 노드의 `writingGuide`에 텍스트로만 합쳐 넣으세요.\n"
         "     1) 별표(`*`), 당구장표시(`※`), 하이픈(`-`), 동그라미(`o`) 등의 기호로 시작하는 문장\n"
         "     2) 문장 끝이 지시형 서술어('~작성', '~명시', '~기재', '~바람', '~요망')로 끝나는 경우\n"
-        "     3) 내용상 지원자가 빈칸을 채워야 하는 '제목'이 아니라, 어떻게 쓰라고 알려주는 '가이드/설명문'인 경우\n\n"
+        "     3) 내용상 지원자가 빈칸을 채워야 하는 '제목'이 아니라, 어떻게 쓰라고 알려주는 '작성요령/가이드/설명문'인 경우\n\n"
 
         "5. **작성요령(writingGuide)의 논리적 배치 (실제 내용 작성 노드 강제 할당)**:\n"
         "   - 추출 제외된 안내 문구(작성 예시, 가이드 등)는 절대 버리지 마십시오.\n"
@@ -139,8 +140,9 @@ def _reconstruct_tree_from_json(json_text: str) -> List[dict]:
                 "id": str(node_data.get("id", uuid.uuid4())).strip(),
                 "title": str(node_data.get("title", "제목 없는 섹션")).strip(),
                 "type": node_data.get("type", "heading"),
-                "writingGuide": node_data.get("writingGuide", ""),
                 "node_address": node_data.get("node_address"),
+                "writingGuide": node_data.get("writingGuide", ""),
+                "tableMetadata": node_data.get("tableMetadata"),
                 "checked": True,
                 "contentChecked": True,
                 "children": []

@@ -20,6 +20,7 @@ HIERARCHY_PATTERNS = [
     (re.compile(r"^\s*[가-하][.\u2024\u00b7]\s"), "heading"), # 가.
     (re.compile(r"^\s*\(\d+\)\s|^\s*\d+\)\s"), "heading"), # (1), 1)
     (re.compile(r"^\s*\([가-하]\)\s|^\s*[가-하]\)\s"), "heading"), # (가), 가)
+    (re.compile(r"^\s*\[[^\]]+\]"), "heading"), # [기술적 측면] 등 대괄호 제목
 ]
 
 def get_para_text(p_elem):

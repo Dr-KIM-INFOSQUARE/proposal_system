@@ -763,13 +763,23 @@ async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Sessio
     output_filename = f"{document_id}_draft.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
-    # 신규 구조적 매핑 엔진(LXML)으로 일원화
-    print(f"[BACKEND] Exporting {document_id} using structural mapping engine...")
-    success = generate_hwpx_from_draft(document_id, tree_data, output_path)
+    # 엔진 선택 분기 (LXML vs PyHWPX)
+    if engine == "pyhwpx":
+        print(f"[BACKEND] Exporting {document_id} using PyHWPX engine (native automation)...")
+        success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path)
+    else:
+        # 기본값 또는 'lxml'인 경우 기존 구조적 매핑 엔진 사용
+        print(f"[BACKEND] Exporting {document_id} using structural mapping engine (LXML)...")
+        success = generate_hwpx_from_draft(document_id, tree_data, output_path)
     
     if not success:
         # 생성 실패 시 에러 보고
-        raise HTTPException(status_code=500, detail="HWPX 파일 생성 중 오류가 발생했습니다. 원본 템플릿과의 매핑이 올바르지 않을 수 있습니다.")
+        error_msg = "HWPX 파일 생성 중 오류가 발생했습니다."
+        if engine == "pyhwpx":
+            error_msg += " (PyHWPX 엔진: 한컴오피스 매크로 실행 실패)"
+        else:
+            error_msg += " (LXML 엔진: XML 구조 매핑 실패)"
+        raise HTTPException(status_code=500, detail=error_msg)
         
     return {
         "status": "success", 
