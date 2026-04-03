@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { api } from '../services/api';
 import { DocumentTree } from './DocumentTree';
 import { ErrorRetryModal } from './ErrorRetryModal';
@@ -44,10 +45,16 @@ interface MarkdownContentProps {
 }
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, className }) => {
+  // \n 문자열이나 <br> 태그를 처리합니다. 중복된(2개 이상) 줄바꿈은 하나로 통일하여 정규화합니다.
+  const processedContent = (content || '내용이 없습니다.')
+    .replace(/\\n/g, '<br />')
+    .replace(/(<br\s*\/?>\s*){2,}/gi, '<br />');
+  
   return (
     <div className={`prose prose-sm max-w-none text-on-surface leading-[2] prose-headings:text-primary prose-a:text-primary prose-strong:text-primary-800 prose-p:mb-6 ${className || ''}`}>
       <ReactMarkdown 
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
         components={{
           h1: ({node, ...props}) => <h1 className="text-xl font-black text-primary mt-8 mb-4 border-b pb-2" {...props} />,
           h2: ({node, ...props}) => <h2 className="text-lg font-bold text-primary mt-6 mb-3" {...props} />,
@@ -57,12 +64,57 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, className })
           li: ({node, ...props}) => <li className="pl-1 text-on-surface/90" {...props} />,
           p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
           strong: ({node, ...props}) => <strong className="font-black text-primary-800 bg-primary/5 px-1 rounded" {...props} />,
-          table: ({node, ...props}) => <div className="overflow-x-auto my-6 shadow-sm rounded-lg border border-outline-variant/20"><table className="min-w-full divide-y divide-outline-variant/20" {...props} /></div>,
-          th: ({node, ...props}) => <th className="bg-surface-container-high px-4 py-2 text-left text-xs font-bold text-primary uppercase tracking-wider" {...props} />,
-          td: ({node, ...props}) => <td className="px-4 py-2 text-xs border-t border-outline-variant/10 text-on-surface" {...props} />,
+          table: ({node, ...props}) => <div className="overflow-x-auto my-6 shadow-sm rounded-lg border border-outline-variant/40"><table className="min-w-full divide-y divide-outline-variant/40" {...props} /></div>,
+          th: ({node, ...props}) => <th className="bg-surface-container-high px-4 py-3 text-left text-xs font-bold text-primary uppercase tracking-wider whitespace-pre-wrap border-outline-variant/40" {...props} />,
+          td: ({node, ...props}) => {
+            // 표 내부의 "*" 또는 "-" 글머리 기호를 처리하기 위한 커스텀 렌더러
+            const renderCellContent = (children: React.ReactNode): React.ReactNode => {
+              return React.Children.map(children, child => {
+                if (typeof child === 'string') {
+                  const lines = child.split(/(<br\s*\/?>)/gi);
+                  return lines.map((line, idx) => {
+                    if (line.match(/<br\s*\/?>/i)) return <br key={idx} />;
+                    
+                    const trimmedLine = line.trim();
+                    // * 또는 - 로 시작하는 행을 글머리 기호로 인식
+                    const isBullet = trimmedLine.startsWith('*') || trimmedLine.startsWith('-');
+                    
+                    if (isBullet) {
+                      // 실제 기호 뒷부분만 추출
+                      const contentText = trimmedLine.substring(1).trim();
+                      return (
+                        <span key={idx} className="flex items-start gap-2 my-0.5 ml-1">
+                          <span className="mt-1.5 h-1 w-1 rounded-full bg-primary/50 shrink-0" />
+                          <span className="flex-1 leading-normal text-on-surface/90">
+                            {contentText}
+                          </span>
+                        </span>
+                      );
+                    }
+                    return line;
+                  });
+                }
+                if (React.isValidElement(child)) {
+                  const element = child as React.ReactElement<{children?: React.ReactNode}>;
+                  if (element.props.children) {
+                    return React.cloneElement(element, {
+                      children: renderCellContent(element.props.children)
+                    } as any);
+                  }
+                }
+                return child;
+              });
+            };
+
+            return (
+              <td className="px-4 py-3 text-xs border-t border-outline-variant/30 text-on-surface whitespace-pre-wrap align-top">
+                {renderCellContent(props.children)}
+              </td>
+            );
+          },
         }}
       >
-        {content || '내용이 없습니다.'}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );
