@@ -6,33 +6,51 @@ import win32com.client
 import time
 import re
 
-def parse_markdown_table(md_text: str) -> list:
-    """LLM이 생성한 마크다운 표 텍스트를 2차원 리스트로 파싱합니다."""
-    rows = []
-    table_lines = []
+import re
+
+import re
+
+def parse_markdown_table(md_text: str, skip_header=True) -> list:
+    """LLM이 생성한 마크다운 표에서 구분선과 헤더를 제거하고 순수 데이터 2차원 리스트를 반환합니다."""
+    md_text = md_text.replace("||", "|\n|")
+    raw_lines = [line.strip() for line in md_text.split('\n') if line.strip()]
     
-    # 1. 텍스트에서 파이프(|)가 포함된 줄(표 데이터)만 순서대로 수집
-    for line in md_text.strip().split('\n'):
-        line = line.strip()
-        if '|' in line:
-            table_lines.append(line)
-            
-    # 2. 마크다운 문법상 두 번째 줄(index 1)은 무조건 구분선(|---|)이므로 삭제
-    if len(table_lines) > 1:
+    merged_lines = []
+    for line in raw_lines:
+        if line.startswith('|'):
+            merged_lines.append(line)
+        else:
+            if merged_lines:
+                merged_lines[-1] = merged_lines[-1] + " " + line
+
+    table_lines = [line for line in merged_lines if '|' in line]
+    
+    # 2번째 줄(구분선) 제거
+    if len(table_lines) > 1 and re.match(r'^[\s\|\-\:]+$', table_lines[1]):
         table_lines.pop(1)
-        
-    # 3. 남은 줄(헤더 및 실제 데이터)을 셀 단위로 분할
+
+    rows = []
     for line in table_lines:
         cells = [cell.strip() for cell in line.split('|')]
-        
-        # 양 끝이 '|'로 닫혀있어 생성된 첫/마지막 빈 요소 제거
         if cells and cells[0] == '': cells.pop(0)
         if cells and cells[-1] == '': cells.pop()
-        
         if cells:
             rows.append(cells)
             
+    # HWP 양식에 이미 헤더가 있으므로, 마크다운의 헤더 행은 버립니다.
+    if skip_header and len(rows) > 0:
+        rows.pop(0)
+        
     return rows
+
+def insert_text_with_hwpx_newlines(hwp, text: str):
+    clean_text = text.replace("**", "").replace("__", "")
+    clean_text = clean_text.replace("<br>", "\n").replace("<br/>", "\n")
+    lines = clean_text.split('\n')
+    for i, line in enumerate(lines):
+        hwp.insert_text(line.strip())
+        if i < len(lines) - 1:
+            hwp.HAction.Run("BreakPara")
 
 # pyhwpx 및 win32com은 런타임에 필요한 시점에 임포트합니다. (순환 참조 방지)
 
@@ -222,55 +240,47 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                 if not content: continue
                 
                 if node_type == "p":
-                    # 1. 번호 기호 제거 후, 자르지 않고 최대 40자까지 넉넉하게 유지 (중복 탐색 방지)
                     clean_keyword = re.sub(r'^([Ⅰ-Ⅹ0-9가-하\-\.\(\)]+)\s*', '', title).strip()
                     clean_keyword = clean_keyword[:40] if clean_keyword else title[:40]
                     
-                    print(f"[PYHWPX] 📝 문단 주입 시도: (키워드 검색: '{clean_keyword}')")
-                    
-                    # 반복 찾기(RepeatFind)를 활용
-                    hwp.MovePos(2) # 문서 맨 위로 이동
+                    hwp.MovePos(2) 
                     hwp.HAction.GetDefault("RepeatFind", hwp.HParameterSet.HFindReplace.HSet)
                     hwp.HParameterSet.HFindReplace.FindString = clean_keyword
                     hwp.HParameterSet.HFindReplace.IgnoreMessage = 1
-                    hwp.HParameterSet.HFindReplace.Direction = 1 # 아래로 탐색
+                    hwp.HParameterSet.HFindReplace.Direction = 1 
                     
                     found = False
                     if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
                         found = True
                     else:
-                        # [폴백 1] 찾기 실패 시 검색어 길이를 약간 줄여서 유연하게 재탐색
                         short_keyword = clean_keyword[:15]
-                        print(f"[PYHWPX] ⚠️ 위치 찾기 실패. 짧은 키워드로 재탐색: '{short_keyword}'")
                         hwp.MovePos(2)
                         hwp.HParameterSet.HFindReplace.FindString = short_keyword
                         if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
                             found = True
                     
                     if found:
-                        print(f"[PYHWPX] 🎯 위치 찾기 성공.")
-                        hwp.HAction.Run("Cancel")      # 찾은 텍스트 블록 해제
-                        hwp.HAction.Run("MoveParaEnd") # 해당 제목 문단의 끝으로 이동
-                        hwp.HAction.Run("BreakPara")   # 엔터
+                        hwp.HAction.Run("Cancel")      
+                        hwp.HAction.Run("MoveParaEnd") 
+                        hwp.HAction.Run("BreakPara")   
                         
-                        hwp.insert_text(content)
-                        if not content.endswith("\n"):
-                            hwp.HAction.Run("BreakPara")
+                        # 일반 텍스트 문자열 대신 줄바꿈 번역 함수 호출
+                        insert_text_with_hwpx_newlines(hwp, content)
+                        
+                        hwp.HAction.Run("BreakPara") # 다음 목차와의 간격을 위해 한 줄 더 띄움
                     else:
-                        # [폴백 2] 최종 실패 시 기존처럼 강제 인덱스 주입 (누락 방지)
-                        print(f"[PYHWPX] 🚨 탐색 최종 실패. 인덱스({idx}) 지점에 강제 삽입.")
+                        print(f"[PYHWPX] 🚨 탐색 실패. 인덱스({idx}) 지점에 강제 삽입.")
                         try:
                             hwp.SetPos(0, idx, 0)
                             hwp.HAction.Run("MoveParaEnd")
                             hwp.HAction.Run("BreakPara")
-                            hwp.insert_text(content)
-                        except Exception as e:
-                            print(f"[PYHWPX] 강제 삽입 실패: {e}")
+                            insert_text_with_hwpx_newlines(hwp, content)
+                        except: pass
                     
                 elif node_type == "tbl":
                     print(f"[PYHWPX] 📊 표 주입 시도: {idx}번째 표 (제목: {title})")
                     
-                    table_data = parse_markdown_table(content)
+                    table_data = parse_markdown_table(content, skip_header=True)
                     
                     ctrl = hwp.HeadCtrl
                     current_tbl_idx = 0
@@ -281,35 +291,55 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                 hwp.SetPosBySet(ctrl.GetAnchorPos(0))
                                 hwp.FindCtrl()
                                 
-                                # 표의 첫 번째 셀(A1)로 내부 진입
+                                # 1. 표의 첫 번째 셀(A1, 헤더)로 진입 후 블록(선택) 해제
                                 hwp.HAction.Run("ShapeObjTableSelCell") 
+                                hwp.HAction.Run("Cancel") 
+                                
+                                # 2. 첫 번째 데이터 행(A2)으로 한 칸 내려감 (헤더 보호)
+                                hwp.HAction.Run("TableLowerCell")
                                 
                                 if table_data:
                                     for r_idx, row in enumerate(table_data):
                                         for c_idx, cell_value in enumerate(row):
-                                            # 기존 셀 텍스트 삭제 (서식 유지)
+                                            
+                                            # 기존 텍스트 지우기 (양식 틀 유지)
                                             hwp.HAction.Run("Cancel") 
                                             hwp.HAction.Run("MoveLineBegin")
                                             hwp.HAction.Run("SelectAll")
                                             hwp.HAction.Run("Delete")
                                             
-                                            # 텍스트 클리닝 (LLM의 굵은 글씨 마크다운 및 HTML 줄바꿈 처리)
-                                            clean_val = cell_value.replace("**", "").replace("__", "")
-                                            clean_val = clean_val.replace("<br>", "\n").replace("<br/>", "\n")
+                                            # 엔터키 번역 함수로 텍스트 입력
+                                            insert_text_with_hwpx_newlines(hwp, cell_value)
                                             
-                                            hwp.insert_text(clean_val.strip())
+                                            # 전체 데이터 중 맨 마지막 셀이 아닐 경우에만 다음 칸으로 이동
+                                            is_last_of_data = (r_idx == len(table_data) - 1) and (c_idx == len(row) - 1)
                                             
-                                            # 마지막 열이 아니면 우측 셀로 이동
-                                            if c_idx < len(row) - 1:
+                                            if not is_last_of_data:
+                                                # 이동 전 현재 위치(좌표) 기억
+                                                pos_before = hwp.get_pos()
+                                                
+                                                # 우측 셀로 이동 (화살표 기능)
                                                 hwp.HAction.Run("TableRightCell")
-                                        
-                                        # 마지막 행이 아니면 다음 행 첫 셀로 이동 
-                                        # (표 끝에서 우측 이동 시 HWP 고유 기능에 의해 새 행이 자동 추가됨)
-                                        if r_idx < len(table_data) - 1:
-                                            hwp.HAction.Run("TableRightCell")
+                                                
+                                                # 이동 후 위치(좌표) 확인
+                                                pos_after = hwp.get_pos()
+                                                
+                                                # 좌표가 1mm도 변하지 않았다면? -> 표의 맨 끝 칸에 갇혔다는 뜻!
+                                                if pos_before == pos_after:
+                                                    print("[PYHWPX] ➕ 표 끝 도달 감지. 명시적으로 새 행을 추가합니다.")
+                                                    
+                                                    # 사람이 Tab 키를 누른 것과 동일하게 맨 아래에 새 행을 만들어주는 액션
+                                                    try:
+                                                        hwp.TableAppendRow() # pyhwpx 내장 래퍼 메서드
+                                                        for _ in range(len(row) - 1):
+                                                            hwp.HAction.Run("TableLeftCell")    
+                                                    except:
+                                                        hwp.HAction.Run("TableAppendRow") # OLE Raw 액션
+                                                        
                                 else:
                                     hwp.HAction.Run("TableCellBlock") 
-                                    hwp.insert_text(content)
+                                    insert_text_with_hwpx_newlines(hwp, content)
+                                    hwp.HAction.Run("Cancel")
                                     
                                 hwp.HAction.Run("Cancel") # 표 블록 해제
                                 break
