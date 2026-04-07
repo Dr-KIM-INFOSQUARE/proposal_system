@@ -93,7 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <h3 className="text-[0.625rem] lg:text-[0.6875rem] font-label uppercase tracking-[0.05rem] text-outline mb-3">최근 프로젝트</h3>
                 <ul className="space-y-2">
                     {projects.length > 0 ? (
-                        projects.slice(0, 5).map((project) => (
+                        projects.slice(0, 3).map((project) => (
                             <li 
                                 key={project.document_id}
                                 onClick={() => onOpenProject?.(project.document_id)}
