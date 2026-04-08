@@ -6,9 +6,27 @@ import win32com.client
 import time
 import re
 
-import re
-
-import re
+def reset_document_styles(hwp):
+    """
+    문서 전체를 선택하여 기본 서식으로 강제 초기화합니다.
+    (휴먼명조, 12pt, 160% 줄간격, 양쪽 정렬, 여백 0)
+    """
+    print("[PYHWPX] 🧹 문서 전체 서식 초기화를 시작합니다.")
+    # 1. 문서 전체 선택
+    hwp.HAction.Run("SelectAll")
+    
+    # 2. 문단 모양 초기화 (양쪽 정렬, 여백 0, 간격 0, 줄간격 160%)
+    # AlignType: "Justify"(양쪽), LineSpacing: 160(%)
+    hwp.set_para(AlignType="Justify", LeftMargin=0, RightMargin=0, PrevSpacing=0, NextSpacing=0, LineSpacing=160)
+    
+    # 3. 글자 모양 초기화 (휴먼명조, 12pt)
+    # pyhwpx의 set_font는 기본적으로 pt 단위를 사용합니다.
+    hwp.set_font(FaceName="휴먼명조", Height=12)
+    
+    # 4. 선택 해제 (문서 맨 앞으로 커서 이동)
+    hwp.HAction.Run("Cancel")
+    hwp.HAction.Run("MoveDocBegin")
+    print("[PYHWPX] ✨ 서식 초기화 완료.")
 
 def parse_markdown_table(md_text: str, skip_header=True) -> list:
     """LLM이 생성한 마크다운 표에서 구분선과 헤더를 제거하고 순수 데이터 2차원 리스트를 반환합니다."""
@@ -43,8 +61,6 @@ def parse_markdown_table(md_text: str, skip_header=True) -> list:
         
     return rows
 
-# 기존 insert_text_with_hwpx_newlines 함수를 아래 코드로 완전히 교체하세요.
-
 # 1. 사용자가 나중에 프론트엔드에서 수정할 수 있도록 전역 딕셔너리로 분리
 # 요구사항에 맞게 스페이스 2, 4, 6개 및 동그라미(○), 작은네모(▪), 하이픈(-) 적용
 PROJECT_BULLET_STYLE = {
@@ -53,15 +69,22 @@ PROJECT_BULLET_STYLE = {
     "[L3]": {"spaces": " " * 6, "symbol": "-"}        # - (하이픈)
 }
 
-def insert_text_with_hwpx_newlines(hwp, text: str):
+import re
+
+def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict):
     """
-    LLM이 생성한 마크다운 텍스트에서 [L1], [L2] 등의 마커를 파싱하여
-    지정된 특수기호와 내어쓰기(Hanging Indent)를 적용하여 한글에 입력합니다.
+    LLM이 생성한 텍스트에서 [L1], [L2] 마커를 찾아 프론트엔드에서 전달받은
+    동적 스타일(기호, 스페이스)을 적용하여 입력합니다.
     """
-    # 텍스트 내의 **(볼드체) 마크다운 잔재 및 <br> 태그 정리
+    # 프론트엔드에서 넘어온 특수기호 설정값 (없으면 기본값 세팅)
+    bullet_config = style_config.get("bullets", {
+        "[L1]": {"symbol": "\u25CB", "spaces": 2}, # ○
+        "[L2]": {"symbol": "\u25AA", "spaces": 4}, # ▪
+        "[L3]": {"symbol": "-", "spaces": 6}       # -
+    })
+
     clean_text = text.replace("**", "").replace("__", "")
     clean_text = clean_text.replace("<br>", "\n").replace("<br/>", "\n")
-    
     lines = clean_text.split('\n')
     
     for i, line in enumerate(lines):
@@ -69,39 +92,33 @@ def insert_text_with_hwpx_newlines(hwp, text: str):
         if not line:
             continue
             
-        # [핵심] 정규식: 맨 앞의 여백, 별표(*), 하이픈(-) 등을 무시하고 [L숫자] 마커와 본문을 분리
         match = re.match(r'^[\s\*\-]*(\[L\d+\])\s*(.*)', line)
         
-        # 1. 줄을 쓰기 전에 이전 문단의 들여쓰기/내어쓰기 속성 찌꺼기 초기화 (중요)
         try:
             hwp.set_para(LeftMargin=0, Indentation=0)
         except:
-            pass # 지원하지 않는 구버전이나 특수 셀 환경 예외처리
+            pass 
             
         if match:
-            marker = match.group(1)   # 예: "[L1]"
-            content = match.group(2)  # 본문 내용
+            marker = match.group(1)   
+            content = match.group(2)  
             
-            # 매핑된 스타일 가져오기 (마커가 사전에 없으면 기본값 설정)
-            style = PROJECT_BULLET_STYLE.get(marker, {"spaces": "", "symbol": ""})
-            spaces = style["spaces"]
-            symbol = style["symbol"]
+            # 동적 설정값 가져오기
+            style = bullet_config.get(marker, {"spaces": 0, "symbol": ""})
+            spaces_count = style.get("spaces", 0)
+            symbol = style.get("symbol", "")
             
-            # 2. 지정된 스페이스 + 특수기호 + 띄어쓰기 1칸 입력
+            # 띄어쓰기 칸 수 만큼 문자열 공백 생성
+            spaces_str = " " * int(spaces_count)
+            
             if symbol:
-                hwp.insert_text(f"{spaces}{symbol} ")
-                
-                # 3. 현재 커서 위치(기호 바로 뒤)를 기준으로 빠른 내어쓰기(Shift+Tab) 실행
+                hwp.insert_text(f"{spaces_str}{symbol} ")
                 hwp.HAction.Run("ParagraphShapeIndentAtCaret")
             
-            # 4. 실제 본문 텍스트 타이핑
             hwp.insert_text(content)
-            
         else:
-            # 마커가 없는 일반 텍스트인 경우 그대로 입력
             hwp.insert_text(line)
         
-        # 마지막 줄이 아니면 줄바꿈(Enter) 실행
         if i < len(lines) - 1:
             hwp.HAction.Run("BreakPara")
 
@@ -149,6 +166,10 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
     - [x] 표 셀 진입 및 주입 로직 강화 (TableCellBlock)
     - [ ] 주입 결과 검증 (로그 및 파일 생성 확인)
     """
+
+    if style_config is None:
+        style_config = {}
+
     # 1. 보안 레지스트리 확인 및 설정
     _ensure_hwp_security_registry()
     
@@ -228,7 +249,9 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         if not hwp.open(template_path):
             print(f"[PYHWPX] 템플릿 열기 실패: {template_path}")
             return False
-        
+
+        reset_document_styles(hwp)
+
         # [3] 주입 대상 노드 수집 (content 플래그 최우선 적용)
         targets = []
         fallback_targets = []
@@ -318,7 +341,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                         hwp.HAction.Run("BreakPara")   
                         
                         # 일반 텍스트 문자열 대신 줄바꿈 번역 함수 호출
-                        insert_text_with_hwpx_newlines(hwp, content)
+                        insert_text_with_hwpx_newlines(hwp, content, style_config)
                         
                         hwp.HAction.Run("BreakPara") # 다음 목차와의 간격을 위해 한 줄 더 띄움
                     else:
@@ -327,7 +350,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                             hwp.SetPos(0, idx, 0)
                             hwp.HAction.Run("MoveParaEnd")
                             hwp.HAction.Run("BreakPara")
-                            insert_text_with_hwpx_newlines(hwp, content)
+                            insert_text_with_hwpx_newlines(hwp, content, style_config)
                         except: pass
                     
                 elif node_type == "tbl":
@@ -362,7 +385,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                             hwp.HAction.Run("Delete")
                                             
                                             # 엔터키 번역 함수로 텍스트 입력
-                                            insert_text_with_hwpx_newlines(hwp, cell_value)
+                                            insert_text_with_hwpx_newlines(hwp, cell_value, style_config)
                                             
                                             # 전체 데이터 중 맨 마지막 셀이 아닐 경우에만 다음 칸으로 이동
                                             is_last_of_data = (r_idx == len(table_data) - 1) and (c_idx == len(row) - 1)
@@ -391,7 +414,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                                         
                                 else:
                                     hwp.HAction.Run("TableCellBlock") 
-                                    insert_text_with_hwpx_newlines(hwp, content)
+                                    insert_text_with_hwpx_newlines(hwp, content, style_config)
                                     hwp.HAction.Run("Cancel")
                                     
                                 hwp.HAction.Run("Cancel") # 표 블록 해제
