@@ -16,7 +16,6 @@ from models.project_models import ProjectSaveRequest, ProjectRenameRequest, Idea
 from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
 from services.notebooklm_service import notebooklm_service
-from services.hwpx_service import generate_hwpx_from_draft
 from services.pyhwpx_service import generate_hwpx_with_pyhwpx
 
 router = APIRouter(prefix="/api", tags=["Projects"])
@@ -795,14 +794,9 @@ async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Sessio
     output_filename = f"{document_id}_draft.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
-    # 엔진 선택 분기 (LXML vs PyHWPX)
-    if engine == "pyhwpx":
-        print(f"[BACKEND] Exporting {document_id} using PyHWPX engine (native automation)...")
-        success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path)
-    else:
-        # 기본값 또는 'lxml'인 경우 기존 구조적 매핑 엔진 사용
-        print(f"[BACKEND] Exporting {document_id} using structural mapping engine (LXML)...")
-        success = generate_hwpx_from_draft(document_id, tree_data, output_path)
+    # 엔진 선택 (LXML 서비스가 제거되었으므로 PyHWPX를 기본으로 사용)
+    print(f"[BACKEND] Exporting {document_id} using PyHWPX engine (native automation)...")
+    success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path)
     
     if not success:
         # 생성 실패 시 에러 보고
