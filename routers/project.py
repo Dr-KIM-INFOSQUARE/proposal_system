@@ -357,7 +357,7 @@ async def reanalyze_project(
 
 @router.post("/projects/save")
 async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db)):
-    """프론트엔드에서 선택한 항목(selected_node_ids)을 저장합니다."""
+    """프론트엔드에서 선택한 항목(selected_node_ids) 및 수정된 트리 데이터를 저장합니다."""
     project = db.query(Project).filter(Project.document_id == request.document_id).first()
     if project:
         project.selected_node_ids = request.selected_node_ids
@@ -365,14 +365,18 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
         # 사용자 정의 이름 반영 (있을 경우만)
         if request.name:
             project.name = request.name
-        # 원본 파일명은 웬만하면 덮어쓰지 않음
+        # 초안 편집 후 저장: tree_data가 전달되면 parsed_tree를 업데이트
+        if request.tree_data is not None and len(request.tree_data) > 0:
+            print(f"[BACKEND] Updating parsed_tree with edited draft data ({len(request.tree_data)} top-level nodes)")
+            project.parsed_tree = request.tree_data
     else:
         project = Project(
             document_id=request.document_id,
             name=request.name or request.filename,
             filename=request.filename,
             selected_node_ids=request.selected_node_ids,
-            content_node_ids=request.content_node_ids
+            content_node_ids=request.content_node_ids,
+            parsed_tree=request.tree_data  # 신규 생성 시에도 트리 데이터 저장
         )
         db.add(project)
     

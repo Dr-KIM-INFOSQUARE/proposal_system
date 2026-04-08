@@ -7,6 +7,7 @@ class ProjectSaveRequest(BaseModel):
     filename: str = "Unknown Document"
     selected_node_ids: List[Union[str, int, Any]]
     content_node_ids: List[Union[str, int, Any]] = []
+    tree_data: Optional[List[Any]] = None # 초안 편집 후 저장 시 전체 트리 데이터
 
 class ProjectRenameRequest(BaseModel):
     document_id: str
