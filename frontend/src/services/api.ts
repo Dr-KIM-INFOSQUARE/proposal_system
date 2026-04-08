@@ -445,5 +445,29 @@ export const api = {
         ...data,
         download_url: data.download_url ? `http://127.0.0.1:8000${data.download_url}` : undefined
     };
+  },
+
+  generateHwpx: async (documentId: string, styleConfig: Record<string, any>) => {
+    const response = await fetch(`${API_BASE_URL}/generate-hwpx`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        style_config: styleConfig,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(errorData.detail || `HWPX Generation failed: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    return {
+      ...data,
+      download_url: data.download_url ? `http://127.0.0.1:8000${data.download_url}` : undefined
+    };
   }
 };

@@ -8,25 +8,31 @@ import re
 
 def reset_document_styles(hwp):
     """
-    문서 전체를 선택하여 기본 서식으로 강제 초기화합니다.
-    (휴먼명조, 12pt, 160% 줄간격, 양쪽 정렬, 여백 0)
+    문서 전체를 선택하여 꼬여있는 서식을 모조리 날려버리고
+    기본 서식(휴먼명조, 12pt, 160% 줄간격, 양쪽 정렬)으로 강제 초기화합니다.
     """
-    print("[PYHWPX] 🧹 문서 전체 서식 초기화를 시작합니다.")
-    # 1. 문서 전체 선택
-    hwp.HAction.Run("SelectAll")
+    print("[PYHWPX] 🧹 본문 전체 서식 강제 초기화를 시작합니다.")
     
-    # 2. 문단 모양 초기화 (양쪽 정렬, 여백 0, 간격 0, 줄간격 160%)
-    # AlignType: "Justify"(양쪽), LineSpacing: 160(%)
-    hwp.set_para(AlignType="Justify", LeftMargin=0, RightMargin=0, PrevSpacing=0, NextSpacing=0, LineSpacing=160)
-    
-    # 3. 글자 모양 초기화 (휴먼명조, 12pt)
-    # pyhwpx의 set_font는 기본적으로 pt 단위를 사용합니다.
-    hwp.set_font(FaceName="휴먼명조", Height=12)
-    
-    # 4. 선택 해제 (문서 맨 앞으로 커서 이동)
+    # 1. 커서를 강제로 본문 맨 앞으로 이동 (안 그러면 SelectAll이 안 먹힐 수 있음)
     hwp.HAction.Run("Cancel")
     hwp.HAction.Run("MoveDocBegin")
-    print("[PYHWPX] ✨ 서식 초기화 완료.")
+    
+    # 2. 문서 전체 선택
+    hwp.HAction.Run("SelectAll")
+    
+    # 3. [핵심] 기존 서식 완전 삭제 (핵폭탄 초기화)
+    hwp.HAction.Run("StyleBase")       # 바탕글 스타일로 덮어쓰기
+    hwp.HAction.Run("CharShapeNormal") # 글자 굵게, 색상 등 개별 서식 싹 지우기
+    hwp.HAction.Run("ParaShapeNormal") # 문단 여백, 들여쓰기 등 싹 지우기
+    
+    # 4. 백지상태가 된 곳에 우리가 원하는 서식 입히기
+    hwp.set_para(AlignType="Justify", LeftMargin=0, RightMargin=0, PrevSpacing=0, NextSpacing=0, LineSpacing=160)
+    hwp.set_font(FaceName="휴먼명조", Height=12, Bold=False)
+    
+    # 5. 블록 해제 및 맨 앞으로 이동
+    hwp.HAction.Run("Cancel")
+    hwp.HAction.Run("MoveDocBegin")
+    print("[PYHWPX] ✨ 본문 서식 초기화 완료.")
 
 def parse_markdown_table(md_text: str, skip_header=True) -> list:
     """LLM이 생성한 마크다운 표에서 구분선과 헤더를 제거하고 순수 데이터 2차원 리스트를 반환합니다."""
@@ -69,18 +75,16 @@ PROJECT_BULLET_STYLE = {
     "[L3]": {"spaces": " " * 6, "symbol": "-"}        # - (하이픈)
 }
 
-import re
 
 def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict):
     """
-    LLM이 생성한 텍스트에서 [L1], [L2] 마커를 찾아 프론트엔드에서 전달받은
-    동적 스타일(기호, 스페이스)을 적용하여 입력합니다.
+    프론트엔드에서 전달받은 스타일(기호, 스페이스)을 적용하여 입력합니다.
+    (로직: 전체 텍스트 입력 -> Home -> Right(기호 뒤로) -> Shift+Tab -> End)
     """
-    # 프론트엔드에서 넘어온 특수기호 설정값 (없으면 기본값 세팅)
     bullet_config = style_config.get("bullets", {
-        "[L1]": {"symbol": "\u25CB", "spaces": 2}, # ○
-        "[L2]": {"symbol": "\u25AA", "spaces": 4}, # ▪
-        "[L3]": {"symbol": "-", "spaces": 6}       # -
+        "[L1]": {"symbol": "\u25CB", "spaces": 0}, 
+        "[L2]": {"symbol": "\u25AA", "spaces": 2}, 
+        "[L3]": {"symbol": "-", "spaces": 4}       
     })
 
     clean_text = text.replace("**", "").replace("__", "")
@@ -94,31 +98,58 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict):
             
         match = re.match(r'^[\s\*\-]*(\[L\d+\])\s*(.*)', line)
         
-        try:
-            hwp.set_para(LeftMargin=0, Indentation=0)
-        except:
-            pass 
-            
         if match:
             marker = match.group(1)   
             content = match.group(2)  
             
-            # 동적 설정값 가져오기
             style = bullet_config.get(marker, {"spaces": 0, "symbol": ""})
-            spaces_count = style.get("spaces", 0)
+            spaces_count = int(style.get("spaces", 0))
             symbol = style.get("symbol", "")
             
-            # 띄어쓰기 칸 수 만큼 문자열 공백 생성
-            spaces_str = " " * int(spaces_count)
+            # 서식 초기화 (꼬임 방지)
+            try:
+                hwp.set_para(LeftMargin=0, Indentation=0, AlignType="Justify", LineSpacing=160)
+                hwp.set_font(FaceName="휴먼명조", Height=12, Bold=False)
+            except:
+                pass
+            
+            if marker == "[L1]" and i > 0:
+                hwp.HAction.Run("BreakPara")
+            
+            spaces_str = " " * spaces_count
             
             if symbol:
-                hwp.insert_text(f"{spaces_str}{symbol} ")
+                # 1. 기호와 텍스트를 한 번에 전부 입력 (타이핑)
+                hwp.insert_text(f"{spaces_str}{symbol} {content}")
+                
+                # 2. 키보드 'Home' 키 역할: 커서를 현재 문단의 맨 앞으로 이동
+                hwp.HAction.Run("MoveParaBegin")
+                
+                # 3. 키보드 '우측 화살표' 역할: 기호와 공백의 길이만큼 커서를 우측으로 이동
+                # 이동 횟수 = 앞에 들어간 스페이스 수 + 기호 길이(1) + 기호 뒤 공백(1)
+                move_steps = spaces_count + len(symbol) + 1
+                for _ in range(move_steps):
+                    hwp.HAction.Run("MoveRight")
+                
+                # 4. 키보드 'Shift + Tab' 역할: 그 위치에서 빠른 내어쓰기 실행
                 hwp.HAction.Run("ParagraphShapeIndentAtCaret")
-            
-            hwp.insert_text(content)
+                
+                # 5. 키보드 'End' 키 역할: 다음 작업을 위해 커서를 다시 문단 맨 끝으로 원복
+                hwp.HAction.Run("MoveParaEnd")
+                
+            else:
+                hwp.insert_text(content)
+                
         else:
+            # 마커가 없는 일반 텍스트
+            try:
+                hwp.set_para(LeftMargin=0, Indentation=0, AlignType="Justify", LineSpacing=160)
+                hwp.set_font(FaceName="휴먼명조", Height=12, Bold=False)
+            except:
+                pass
             hwp.insert_text(line)
         
+        # 마지막 줄이 아니면 엔터(줄바꿈)
         if i < len(lines) - 1:
             hwp.HAction.Run("BreakPara")
 
@@ -157,7 +188,7 @@ def _ensure_hwp_security_registry():
     except Exception as e:
         print(f"[PYHWPX] Failed to update registry for HWP security: {e}")
 
-def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: str) -> bool:
+def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: str, style_config: dict = None) -> bool:
     """
     공식 pyhwpx 라이브러리를 사용하여 HWPX 템플릿에 데이터를 주입합니다.
     - [x] pdf_service.py의 보안 모듈 등록 로직 통합 `_ensure_hwp_security_registry`
@@ -185,7 +216,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
     template_path = None
     
     if os.path.exists(UPLOAD_DIR):
-        candidates = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(document_id) and f.endswith(".hwpx") and not f.endswith("_draft.hwpx")]
+        candidates = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(document_id) and f.endswith(".hwpx") and not f.endswith("_draft.hwpx") and not f.endswith("_styled.hwpx")]
         if candidates:
             template_path = os.path.abspath(os.path.join(UPLOAD_DIR, candidates[0]))
     
@@ -257,19 +288,29 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         fallback_targets = []
         global_tbl_idx = 0  # 표 순차 부여용 카운터
 
+        seen_addrs = set()
+
         def collect_targets(nodes):
             nonlocal global_tbl_idx
             for node in nodes:
-                # 핵심: content 플래그가 True이고 작성된 초안이 있는 경우만 확실한 타겟으로 취급
+                addr = node.get("node_address")
+                
+                # ==========================================
+                # [핵심 로직] 이미 방명록에 있는 주소면 무시하고 패스!
+                # ==========================================
+                if addr:
+                    if addr in seen_addrs:
+                        continue
+                    seen_addrs.add(addr) # 처음 온 주소면 방명록에 기록
+                    
                 is_content_target = node.get("content") is True
                 content = node.get("draft_content", "").strip()
                 title = node.get("title", "").strip()
-                addr = node.get("node_address")
                 json_type = node.get("type", "heading")
                 
                 if is_content_target and content:
                     if json_type == "table":
-                        # 표는 무조건 순서대로 인덱싱 (주소 의존 X)
+                        # 표는 무조건 순서대로 인덱싱
                         targets.append({
                             "type": "tbl",
                             "index": global_tbl_idx,
@@ -288,7 +329,6 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                 "title": title
                             })
                     else:
-                        # content는 True인데 주소만 누락된 노드 -> 폴백(텍스트 검색)으로 구제
                         fallback_targets.append({
                             "type": "p",
                             "content": content,

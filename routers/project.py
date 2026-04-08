@@ -12,7 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
-from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest
+from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest, HwpxGenerateRequest
 from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
 from services.notebooklm_service import notebooklm_service
@@ -817,6 +817,48 @@ async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Sessio
         "status": "success", 
         "download_url": f"/api/projects/download/{output_filename}",
         "filename": f"{project.name}_초안.hwpx"
+    }
+
+@router.post("/generate-hwpx")
+async def generate_hwpx_custom(request: HwpxGenerateRequest, db: Session = Depends(get_db)):
+    """프론트엔드에서 전달받은 스타일 설정을 적용하여 HWPX 파일을 생성합니다."""
+    document_id = request.document_id
+    style_config = request.style_config
+    
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    if not project.parsed_tree:
+        raise HTTPException(status_code=400, detail="Draft content is empty.")
+        
+    tree_data = project.parsed_tree
+    if isinstance(tree_data, str):
+        try:
+            tree_data = json.loads(tree_data)
+        except:
+            tree_data = []
+
+    output_filename = f"{document_id}_styled.hwpx"
+    output_path = os.path.join(UPLOAD_DIR, output_filename)
+    
+    # 동적 스타일 설정을 적용하기 위해 pyhwpx 엔진을 사용합니다.
+    print(f"[BACKEND] Generating styled HWPX for {document_id} using PyHWPX...")
+    
+    # pyhwpx_service.py의 generate_hwpx_with_pyhwpx 함수가 style_config를 받도록 수정되어야 함
+    # 현재 pyhwpx_service.py의 시그니처가 (document_id, tree_data, output_path)이므로 
+    # 내부적으로 style_config를 넘길 수 있도록 수정이 필요합니다.
+    # 일단은 호환성을 고려하여 style_config를 세션/전역 등에 넘기거나 함수를 수정합니다.
+    
+    success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path, style_config=style_config)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="HWPX 파일 생성 중 오류가 발생했습니다.")
+        
+    return {
+        "status": "success", 
+        "download_url": f"/api/projects/download/{output_filename}",
+        "filename": f"{project.name}_최종.hwpx"
     }
 
 @router.get("/projects/download/{filename}")

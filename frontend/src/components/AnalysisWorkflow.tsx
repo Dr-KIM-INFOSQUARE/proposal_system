@@ -5,6 +5,7 @@ import rehypeRaw from 'rehype-raw';
 import { api } from '../services/api';
 import { DocumentTree } from './DocumentTree';
 import { ErrorRetryModal } from './ErrorRetryModal';
+import { HwpxFormatModal } from './HwpxFormatModal';
 import type { DocumentTreeRef } from './DocumentTree';
 import type { DocumentNode } from '../types';
 
@@ -146,6 +147,34 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [activeStep, setActiveStep] = useState<number>(1);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const treeRef = useRef<DocumentTreeRef>(null);
+  
+  const [isHwpxModalOpen, setIsHwpxModalOpen] = useState<boolean>(false);
+
+  const handleOpenHwpxModal = async () => {
+    if (!props.documentId) return;
+    try {
+      const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+      await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
+      setIsHwpxModalOpen(true);
+    } catch(err) {
+      alert("문서 저장 중 오류가 발생했습니다: " + err);
+    }
+  };
+
+  const handleGenerateHwpx = async (styleConfig: any) => {
+    if (!props.documentId) return;
+    try {
+      const data = await api.generateHwpx(props.documentId, styleConfig);
+      if (data.status === 'success' && data.download_url) {
+          window.location.href = data.download_url;
+      } else {
+          alert("HWPX 생성 실패: " + (data.detail || "알 수 없는 오류"));
+      }
+    } catch (error) {
+      alert("HWPX 생성 중 오류: " + error);
+      throw error;
+    }
+  };
 
   const [ideaMode, setIdeaMode] = useState<'guide' | 'free'>('guide');
   const [guideAnswers, setGuideAnswers] = useState({
@@ -1189,21 +1218,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                </button>
                            </div>
                            <button 
-                                onClick={async () => {
-                                    if (!props.documentId) return;
-                                    try {
-                                        const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-                                        await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
-                                        const data = await api.exportHwpx(props.documentId, hwpxEngine);
-                                        if (data.status === 'success' && data.download_url) {
-                                            window.location.href = data.download_url;
-                                        } else {
-                                            alert("실패: " + (data.detail || "알 수 없는 오류"));
-                                        }
-                                    } catch(err) {
-                                        alert("오류: " + err);
-                                    }
-                                }}
+                                onClick={handleOpenHwpxModal}
                                 className="px-5 py-2.5 bg-primary/10 text-primary text-sm font-black rounded-xl border border-primary/20 hover:bg-primary/20 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
                             >
                                 <span className="material-symbols-outlined text-lg">file_download</span>
@@ -1274,7 +1289,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                      </div>
                      
                      <div className="flex justify-end pt-2 border-t border-outline-variant/10">
-                         <button className="px-6 py-3.5 bg-primary text-white font-black text-sm rounded-xl shadow-md hover:shadow-lg hover:bg-primary/95 flex items-center gap-2 transition-all hover:-translate-y-0.5 active:translate-y-0 text-center w-full md:w-auto justify-center">
+                         <button 
+                             onClick={handleOpenHwpxModal}
+                             className="px-6 py-3.5 bg-primary text-white font-black text-sm rounded-xl shadow-md hover:shadow-lg hover:bg-primary/95 flex items-center gap-2 transition-all hover:-translate-y-0.5 active:translate-y-0 text-center w-full md:w-auto justify-center"
+                         >
                              <span className="material-symbols-outlined text-xl">download</span>
                              최종 파일(HWPX) 다운로드
                          </button>
@@ -1293,6 +1311,12 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           onCancel={() => retryModalConfig.resolve && retryModalConfig.resolve(false)}
         />
       )}
+      <HwpxFormatModal 
+        isOpen={isHwpxModalOpen}
+        onClose={() => setIsHwpxModalOpen(false)}
+        documentId={props.documentId}
+        onGenerate={handleGenerateHwpx}
+      />
     </div>
   );
 };
