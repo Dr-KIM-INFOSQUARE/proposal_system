@@ -123,13 +123,12 @@ export const api = {
   },
   
   renameProject: async (documentId: string, newName: string) => {
-    const response = await fetch(`${API_BASE_URL}/projects/rename`, {
-      method: 'POST',
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/rename`, {
+      method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        document_id: documentId,
         new_name: newName,
       }),
     });

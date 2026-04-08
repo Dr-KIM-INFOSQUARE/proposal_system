@@ -231,6 +231,21 @@ async def reanalyze_project_stream(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+@router.patch("/projects/{document_id}/rename")
+async def rename_project(
+    document_id: str, 
+    request: ProjectRenameRequest,
+    db: Session = Depends(get_db)
+):
+    """프로젝트의 이름을 변경합니다."""
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    project.name = request.new_name
+    db.commit()
+    return {"status": "success", "new_name": project.name}
+
 @router.get("/usage")
 async def get_usage_statistics(db: Session = Depends(get_db)):
     """API 사용량 및 비용 통계를 반환합니다."""
@@ -363,16 +378,6 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     
     db.commit()
     return {"status": "success", "message": "Project saved successfully"}
-@router.post("/projects/rename")
-async def rename_project(request: ProjectRenameRequest, db: Session = Depends(get_db)):
-    """프로젝트의 이름을 변경합니다."""
-    project = db.query(Project).filter(Project.document_id == request.document_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    project.name = request.new_name
-    db.commit()
-    return {"status": "success", "message": "Project renamed successfully"}
 @router.post("/projects/{document_id}/idea/enhance")
 async def enhance_idea(document_id: str, request: IdeaEnhanceRequest, db: Session = Depends(get_db)):
     """사용자의 아이디어를 마스터 브리프로 고도화합니다."""
@@ -415,10 +420,15 @@ async def enhance_idea_stream(
         try:
             from services.gemini_service import enhance_business_idea_stream
             async for chunk in enhance_business_idea_stream(request.idea_text, request.model_id):
+                # 방어 로직: chunk가 dict인지 확인
+                if not isinstance(chunk, dict):
+                    print(f"[BACKEND] Skipping non-dict chunk: {chunk}")
+                    continue
+
                 # 데이터가 완료 상태이면 요금 및 결과 로깅
                 if chunk.get("status") == "completed":
-                    data = chunk.get("data", {})
-                    if data.get("usage"):
+                    data = chunk.get("data")
+                    if isinstance(data, dict) and data.get("usage"):
                         # 스트리밍 방식에서는 usage 정보 활용이 제한적일 수 있음.
                         log_usage(document_id, request.model_id, data["usage"], db, task_type="idea_enhance")
                 
@@ -446,8 +456,6 @@ async def save_idea(document_id: str, request: IdeaSaveRequest, db: Session = De
     db.commit()
     
     return {"status": "success", "message": "아이디어가 성공적으로 저장되었습니다."}
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 from datetime import datetime, timedelta
 from sqlalchemy import or_
@@ -497,7 +505,12 @@ async def list_projects(
         has_any_draft = False
         if p.parsed_tree:
             def check_draft_content(nodes):
+                if not nodes or not isinstance(nodes, list):
+                    return False
                 for n in nodes:
+                    # 방어 로직: n이 딕셔너리가 아닌 경우 스킵 (손상된 데이터 대응)
+                    if not isinstance(n, dict):
+                        continue
                     if n.get("draft_content") and len(n["draft_content"].strip()) > 0: return True
                     if n.get("children") and check_draft_content(n["children"]): return True
                 return False
@@ -627,12 +640,17 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
     content_set = set(project.content_node_ids or [])
     
     def apply_checked(nodes):
+        if not nodes or not isinstance(nodes, list):
+            return
         for n in nodes:
-            if n["id"] in selected_set:
+            # 방어 로직: n이 딕셔너리가 아닌 경우 스킵 (손상된 데이터 대응)
+            if not isinstance(n, dict):
+                continue
+            if n.get("id") in selected_set:
                 n["checked"] = True
-            if n["id"] in content_set:
+            if n.get("id") in content_set:
                 n["contentChecked"] = True
-            if "children" in n and n["children"]:
+            if n.get("children"):
                 apply_checked(n["children"])
                 
     apply_checked(tree)
@@ -648,6 +666,24 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
         "initial_idea": getattr(project, "initial_idea", None),
         "pdf_url": f"/uploads/{document_id}.pdf"
     }
+
+
+def prepare_tree_for_drafting(nodes):
+    """contentChecked를 content로 통일하여 NotebookLM 서비스에 전달할 트리를 준비합니다."""
+    if not isinstance(nodes, list):
+        return []
+    result = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        prepared = dict(node)
+        # contentChecked 또는 content 중 하나라도 True면 content=True로 통일
+        is_content = node.get("contentChecked", False) or node.get("content", False)
+        prepared["content"] = bool(is_content)
+        if "children" in node and isinstance(node["children"], list):
+            prepared["children"] = prepare_tree_for_drafting(node["children"])
+        result.append(prepared)
+    return result
 
 
 @router.post("/projects/{document_id}/draft/generate")
@@ -674,69 +710,61 @@ async def generate_draft_stream(
         print(f"[BACKEND] WARNING: Template PDF missing: {pdf_path}")
         pdf_path = None
         
-    # 트리 데이터 준비
+    # 트리 데이터 준비 (안정성을 위해 DB의 원본 트리를 직접 사용)
     try:
-        print(f"[BACKEND] Preparing document tree...")
-        export_data = await export_project(document_id, db)
-        document_tree = export_data.get("export_data", [])
-        print(f"[BACKEND] Document tree prepared (nodes: {len(document_tree)})")
+        print(f"[BACKEND] Loading raw parsed_tree from DB...")
+        raw_tree = project.parsed_tree or []
+        
+        if not raw_tree or len(raw_tree) == 0:
+            print(f"[BACKEND] ERROR: parsed_tree is empty.")
+            raise HTTPException(status_code=400, detail="문서 구조 가이드가 비어있습니다. '문서 구조 분석' 탭에서 분석을 먼저 수행해 주세요.")
+            
+        # NotebookLM 서비스로 넘기기 전 트리 데이터 정규화
+        document_tree = prepare_tree_for_drafting(raw_tree)
+        print(f"[BACKEND] Final Document tree prepared (nodes: {len(document_tree)})")
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"[BACKEND] WARNING: export_project failed: {e}. Using raw parsed_tree.")
-        document_tree = project.parsed_tree or []
+        print(f"[BACKEND] ERROR during tree preparation: {e}")
+        raise HTTPException(status_code=500, detail=f"데이터 준비 실패: {str(e)}")
 
     async def event_generator():
         print(f"[BACKEND] SSE event_generator started for {document_id}")
         try:
-            # NotebookLMService를 통해 5단계 파이프라인 실행
-            # 스마트 재개 로직: 기존 DB 상태(notebook_id, research_mode, persona_injected)를 서비스에 전달
             async for progress in notebooklm_service.generate_draft_stream(
                 document_id=document_id,
                 master_brief=master_brief,
                 document_tree=document_tree,
                 pdf_path=pdf_path,
                 research_mode=request.research_mode,
-                project_name=project.name,
-                existing_notebook_id=project.notebook_id,
-                last_research_mode=project.research_mode,
-                has_persona=bool(project.persona_injected)
+                project_name=project.name
             ):
                 print(f"[BACKEND] SSE Yielding progress: {progress[:100]}")
                 data = json.loads(progress)
                 
-                # 1. notebook_id가 반환되면 즉시 DB에 저장 (중간 중단 대비)
-                if data.get("notebook_id") and data.get("notebook_id") != project.notebook_id:
-                    print(f"[BACKEND] New notebook_id discovered: {data.get('notebook_id')}. Saving to DB.")
+                # 1. notebook_id가 반환되면 저장
+                if data.get("notebook_id"):
                     project.notebook_id = data.get("notebook_id")
                     db.commit()
 
-                # 2. 리서치 완료 시 상태 업데이트 (idempotency)
-                if data.get("research_completed"):
-                    # 리서치가 새로 완료되었거나 스킵되었을 때 모드 저장
-                    mode = data.get("research_mode", request.research_mode)
-                    print(f"[BACKEND] Research status updated to: {mode}")
-                    project.research_mode = mode
-                    db.commit()
-
-                # 3. 페르소나 주입 완료 시 상태 업데이트
-                if data.get("persona_injected"):
-                    print(f"[BACKEND] Persona injection status: Done")
-                    project.persona_injected = 1
-                    db.commit()
-
-                # 4. 성공적으로 완료된 경우 DB에 최종 트리 업데이트
+                # 2. 성공적으로 완료된 경우 DB에 최종 트리 업데이트
                 if data.get("status") == "completed":
                     final_tree = data.get("tree")
-                    if final_tree:
-                        print(f"[BACKEND] Draft generation completed. Saving final tree to DB.")
+                    # 방어 로직: 완료 트리 데이터가 비어있으면 DB를 덮어씌우지 않음
+                    if final_tree and len(final_tree) > 0:
+                        print(f"[BACKEND] Draft generation completed successfully. Saving tree to DB.")
                         project.parsed_tree = final_tree
                         db.commit()
+                    else:
+                        print(f"[BACKEND] WARNING: Completed with empty tree. Skipping DB save to protect structure.")
                 
                 yield f"data: {progress}\n\n"
                 await asyncio.sleep(0.05)
 
         except Exception as e:
             print(f"[BACKEND] SSE FATAL ERROR: {str(e)}")
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'status': 'error', 'message': f'초안 작성 실패: {str(e)}'})}\n\n"
+            return # 즉시 generator 종료
         finally:
             print(f"[BACKEND] SSE event_generator closed for {document_id}")
 
@@ -805,10 +833,9 @@ async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
-    # 1. 프로젝트 메인 상태 초기화
+    # 1. 프로젝트 메인 상태 초기화 (노트북 세션 관련 데이터 모두 삭제)
     project.notebook_id = None
     project.research_mode = None
-    # models/database.py에 research_status가 없으므로 해당 필드 할당은 생략
     project.persona_injected = 0
     
     # 2. parsed_tree 내의 모든 노드에 대해 'content' 및 'draft_content' 필드 초기화
@@ -816,8 +843,6 @@ async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
         if not nodes or not isinstance(nodes, list):
             return
         for node in nodes:
-            if "content" in node:
-                node["content"] = None
             if "draft_content" in node:
                 node["draft_content"] = None
             if "children" in node and node["children"]:

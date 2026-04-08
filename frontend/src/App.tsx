@@ -316,6 +316,9 @@ function App() {
           projectName={fileName}
           onProjectNameChange={(name: string) => {
             setFileName(name);
+            if (currentDocumentId) {
+                handleRename(currentDocumentId, name);
+            }
           }}
           isAnalyzing={isUploading || isEnhancing}
           aiMessage={isUploading ? uploadMessage : (isEnhancing ? enhanceMessage : null)}

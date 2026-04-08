@@ -27,7 +27,7 @@ def _ensure_hwp_security_registry():
     key_path = r"Software\HNC\HwpAutomation\Modules"
     value_name = "FilePathCheckerModuleExample"
     # 프로젝트 내의 hwpx_security.dll 절대 경로
-    dll_path = os.path.abspath("hwpx_security.dll")
+    dll_path = os.path.abspath("./resources/hwpx_security.dll")
     
     if not os.path.exists(dll_path):
         print(f"Warning: Security DLL not found at {dll_path}")

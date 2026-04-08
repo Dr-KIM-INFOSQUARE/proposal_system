@@ -43,12 +43,65 @@ def parse_markdown_table(md_text: str, skip_header=True) -> list:
         
     return rows
 
+# 기존 insert_text_with_hwpx_newlines 함수를 아래 코드로 완전히 교체하세요.
+
+# 1. 사용자가 나중에 프론트엔드에서 수정할 수 있도록 전역 딕셔너리로 분리
+# 요구사항에 맞게 스페이스 2, 4, 6개 및 동그라미(○), 작은네모(▪), 하이픈(-) 적용
+PROJECT_BULLET_STYLE = {
+    "[L1]": {"spaces": " " * 2, "symbol": "\u25CB"},  # ○ (빈 동그라미)
+    "[L2]": {"spaces": " " * 4, "symbol": "\u25AA"},  # ▪ (꽉 찬 작은 네모)
+    "[L3]": {"spaces": " " * 6, "symbol": "-"}        # - (하이픈)
+}
+
 def insert_text_with_hwpx_newlines(hwp, text: str):
+    """
+    LLM이 생성한 마크다운 텍스트에서 [L1], [L2] 등의 마커를 파싱하여
+    지정된 특수기호와 내어쓰기(Hanging Indent)를 적용하여 한글에 입력합니다.
+    """
+    # 텍스트 내의 **(볼드체) 마크다운 잔재 및 <br> 태그 정리
     clean_text = text.replace("**", "").replace("__", "")
     clean_text = clean_text.replace("<br>", "\n").replace("<br/>", "\n")
+    
     lines = clean_text.split('\n')
+    
     for i, line in enumerate(lines):
-        hwp.insert_text(line.strip())
+        line = line.strip()
+        if not line:
+            continue
+            
+        # [핵심] 정규식: 맨 앞의 여백, 별표(*), 하이픈(-) 등을 무시하고 [L숫자] 마커와 본문을 분리
+        match = re.match(r'^[\s\*\-]*(\[L\d+\])\s*(.*)', line)
+        
+        # 1. 줄을 쓰기 전에 이전 문단의 들여쓰기/내어쓰기 속성 찌꺼기 초기화 (중요)
+        try:
+            hwp.set_para(LeftMargin=0, Indentation=0)
+        except:
+            pass # 지원하지 않는 구버전이나 특수 셀 환경 예외처리
+            
+        if match:
+            marker = match.group(1)   # 예: "[L1]"
+            content = match.group(2)  # 본문 내용
+            
+            # 매핑된 스타일 가져오기 (마커가 사전에 없으면 기본값 설정)
+            style = PROJECT_BULLET_STYLE.get(marker, {"spaces": "", "symbol": ""})
+            spaces = style["spaces"]
+            symbol = style["symbol"]
+            
+            # 2. 지정된 스페이스 + 특수기호 + 띄어쓰기 1칸 입력
+            if symbol:
+                hwp.insert_text(f"{spaces}{symbol} ")
+                
+                # 3. 현재 커서 위치(기호 바로 뒤)를 기준으로 빠른 내어쓰기(Shift+Tab) 실행
+                hwp.HAction.Run("ParagraphShapeIndentAtCaret")
+            
+            # 4. 실제 본문 텍스트 타이핑
+            hwp.insert_text(content)
+            
+        else:
+            # 마커가 없는 일반 텍스트인 경우 그대로 입력
+            hwp.insert_text(line)
+        
+        # 마지막 줄이 아니면 줄바꿈(Enter) 실행
         if i < len(lines) - 1:
             hwp.HAction.Run("BreakPara")
 
@@ -59,7 +112,7 @@ def _ensure_hwp_security_registry():
     key_path = r"Software\HNC\HwpAutomation\Modules"
     value_name = "FilePathCheckerModuleExample"
     # 프로젝트 내의 hwpx_security.dll 절대 경로
-    dll_path = os.path.abspath("hwpx_security.dll")
+    dll_path = os.path.abspath("./resources/hwpx_security.dll")
     
     if not os.path.exists(dll_path):
         print(f"[PYHWPX] Warning: Security DLL not found at {dll_path}. 보안창이 뜰 수 있습니다.")
