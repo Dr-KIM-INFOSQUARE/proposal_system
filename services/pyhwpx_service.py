@@ -137,6 +137,13 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
             
             spaces_str = " " * spaces_count
             
+            # 동그라미 번호 본문 감지 (①~㊿)
+            # 동그라미 기호 자체가 특수 기호 역할을 하도록 덮어씌움
+            circled_match = re.match(r'^([①-⑳㉑-㉟㊱-㊿])\s*(.*)', content)
+            if circled_match:
+                symbol = circled_match.group(1)
+                content = circled_match.group(2)
+            
             if symbol:
                 # 1. 들여쓰기 공백 먼저 주입
                 hwp.insert_text(spaces_str)
@@ -166,7 +173,7 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
                 hwp.HAction.Run("MoveParaEnd")
                 
             else:
-                hwp.insert_text(content)
+                hwp.insert_text(f"{spaces_str}{content}")
                 
         else:
             # 마커가 없는 일반 텍스트
@@ -271,7 +278,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         # 런타임에는 Dispatch를 사용하여 안전하게 객체를 생성합니다.
         try:
             # win32com 초기화
-            dispatch_hwp = win32com.client.Dispatch('HWPFrame.HwpObject')
+            dispatch_hwp = win32com.client.DispatchEx('HWPFrame.HwpObject')
             print("[PYHWPX] ✅ HwpObject Dispatch 성공.")
         except Exception as dispatch_err:
             print(f"[PYHWPX] ❌ Dispatch 실패: {dispatch_err}")
@@ -305,8 +312,9 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         if not hasattr(hwp, "on_quit"):
             hwp.on_quit = True
         
-        # 백그라운드 실행 유지
+        # 백그라운드 실행 유지 및 팝업 억제
         try:
+            hwp.SetMessageBoxMode(0x00000000)
             hwp.XHwpWindows.Item(0).Visible = False
         except:
             pass
@@ -524,17 +532,56 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         return False
         
     finally:
-        # [7] 확실한 종료 (좀비 프로세스 방지)
+        # 팝업 억제 설정 롤백
         if hwp:
             try:
-                hwp.quit()
-                time.sleep(0.5)
+                hwp.SetMessageBoxMode(0x00000001)
             except:
                 pass
-        
-        # COM 초기화 해제
+
+        # ==========================================
+        # 💀 [7] 확실한 종료 및 좀비 프로세스 말살 로직
+        # ==========================================
+        print("[PYHWPX] 🧹 HWP 프로세스 및 메모리 정리를 시작합니다.")
+        if hwp:
+            try:
+                # 1. 문서 강제 닫기 (저장 안 함 팝업 방지)
+                try:
+                    hwp.Clear(1)
+                except Exception:
+                    try:
+                        hwp.clear(1)
+                    except: pass
+                
+                # 2. 한글 프로그램 종료 명령
+                try:
+                    hwp.Quit()
+                except Exception:
+                    try:
+                        hwp.quit()
+                    except: pass
+                time.sleep(0.5) # 프로세스가 닫힐 시간 부여
+            except Exception as quit_err:
+                print(f"[PYHWPX] ⚠️ HWP Quit 중 오류 (무시됨): {quit_err}")
+                
+        # 3. 파이썬 변수(레퍼런스) 강제 삭제 
+        # (COM 객체는 파이썬 변수가 하나라도 물고 있으면 절대 안 죽습니다)
+        try:
+            if 'hwp' in locals(): del hwp
+            if 'dispatch_hwp' in locals(): del dispatch_hwp
+            if 'native_hwp' in locals(): del native_hwp
+            if 'pset' in locals(): del pset
+        except Exception as del_err:
+            pass
+
+        # 4. 파이썬 가비지 컬렉터 강제 호출 (메모리 즉시 싹쓸이)
+        import gc
+        gc.collect()
+
+        # 5. 윈도우 COM 스레드 초기화 해제
         try:
             pythoncom.CoUninitialize()
-        except:
+            print("[PYHWPX] ✨ COM 스레드 반환 완료. 프로세스가 깨끗하게 종료되었습니다.")
+        except Exception as com_err:
             pass
 
