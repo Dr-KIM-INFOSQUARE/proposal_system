@@ -199,7 +199,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
   const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
-  const [hwpxEngine, setHwpxEngine] = useState<'lxml' | 'pyhwpx'>('lxml');
 
   // Step 2 UI States for tabs
   const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
@@ -250,7 +249,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           docId, 
           modelToUse,
           modeToUse,
-          hwpxEngine,
+          "pyhwpx",
           (msg) => {
             if (props.onEnhanceStateChange) {
                 props.onEnhanceStateChange(true, msg);
@@ -1165,21 +1164,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                    }
                                }
                            }}
-                           className="flex items-center gap-1.5 px-3 py-1.5 bg-error/10 hover:bg-error/20 text-[11px] font-bold text-error rounded-lg transition-all border border-error/20 cursor-pointer"
+                           className="px-4 py-2 bg-error/10 text-error hover:bg-error hover:text-white text-[12px] font-black rounded-lg transition-all border border-error/20 shadow-sm hover:shadow-md cursor-pointer flex items-center gap-2 group"
                        >
-                           <span className="material-symbols-outlined text-[16px]">refresh</span>
+                           <span className="material-symbols-outlined text-[16px] group-hover:rotate-180 transition-transform">refresh</span>
                            진행 상태 완전 리셋(서버)
-                       </button>
-                       <button 
-                           onClick={() => {
-                               if (window.confirm("현재 화면의 내용을 비울까요?")) {
-                                   setDraftTree([]);
-                               }
-                           }}
-                           className="flex items-center gap-1.5 px-3 py-1.5 bg-outline-variant/10 hover:bg-surface-container-highest text-[11px] font-bold text-outline rounded-lg transition-all border border-outline-variant/20 cursor-pointer"
-                       >
-                           <span className="material-symbols-outlined text-[16px]">restart_alt</span>
-                           화면만 초기화
                        </button>
                    </div>
                    
@@ -1203,28 +1191,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                               💾 초안 확정 및 저장
                            </button>
 
-                           <div className="flex items-center bg-surface-container-low p-1 rounded-xl border border-outline-variant/20 shadow-inner ml-4">
-                               <button 
-                                   onClick={() => setHwpxEngine('lxml')}
-                                   className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center gap-1.5 transition-all ${hwpxEngine === 'lxml' ? 'bg-white text-primary shadow-sm ring-1 ring-primary/10' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                               >
-                                   LXML
-                               </button>
-                               <button 
-                                   onClick={() => setHwpxEngine('pyhwpx')}
-                                   className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center gap-1.5 transition-all ${hwpxEngine === 'pyhwpx' ? 'bg-white text-primary shadow-sm ring-1 ring-primary/10' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                               >
-                                   PyHWPX
-                               </button>
-                           </div>
                            <button 
                                 onClick={handleOpenHwpxModal}
-                                className="px-5 py-2.5 bg-primary/10 text-primary text-sm font-black rounded-xl border border-primary/20 hover:bg-primary/20 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                                className="px-6 py-2.5 ml-4 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-sm font-black rounded-xl border border-transparent shadow-[0_4px_12px_rgba(167,139,250,0.4)] hover:shadow-[0_6px_16px_rgba(167,139,250,0.6)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md transition-all flex items-center gap-2 cursor-pointer"
                             >
-                                <span className="material-symbols-outlined text-lg">file_download</span>
-                                HWPX 생성
+                                <span className="material-symbols-outlined text-lg">description</span>
+                                ✨ 고품질 HWPX 생성
                             </button>
-                       </div>
+                        </div>
                    )}
                 </div>
              )}

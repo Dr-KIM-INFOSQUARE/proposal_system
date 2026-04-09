@@ -242,8 +242,8 @@ export const api = {
     return response.json();
   },
 
-  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', engine: 'lxml' | 'pyhwpx' = 'lxml', onProgress: (msg: string) => void) => {
-    console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode}, Engine: ${engine})`);
+  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', onProgress: (msg: string) => void) => {
+    console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode})`);
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/generate`, {
       method: 'POST',
       headers: {
@@ -252,8 +252,7 @@ export const api = {
       body: JSON.stringify({
         document_id: documentId,
         model_id: modelId,
-        research_mode: researchMode,
-        engine: engine
+        research_mode: researchMode
       }),
     });
 
@@ -434,8 +433,8 @@ export const api = {
     return result;
   },
 
-  exportHwpx: async (documentId: string, engine: 'lxml' | 'pyhwpx' = 'lxml') => {
-    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx?engine=${engine}`);
+  exportHwpx: async (documentId: string) => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx`);
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ detail: response.statusText }));
         throw new Error(errorData.detail || `Export failed: ${response.statusText}`);

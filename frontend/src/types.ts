@@ -16,5 +16,4 @@ export interface DraftGenerateRequest {
   documentId: string;
   modelId?: string;
   researchMode?: 'fast' | 'deep';
-  engine?: 'lxml' | 'pyhwpx';
 }

@@ -775,7 +775,7 @@ async def generate_draft_stream(
 
 
 @router.get("/projects/{document_id}/export_hwpx")
-async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Session = Depends(get_db)):
+async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -794,17 +794,12 @@ async def export_project_hwpx(document_id: str, engine: str = "lxml", db: Sessio
     output_filename = f"{document_id}_draft.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
-    # 엔진 선택 (LXML 서비스가 제거되었으므로 PyHWPX를 기본으로 사용)
     print(f"[BACKEND] Exporting {document_id} using PyHWPX engine (native automation)...")
     success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path)
     
     if not success:
         # 생성 실패 시 에러 보고
-        error_msg = "HWPX 파일 생성 중 오류가 발생했습니다."
-        if engine == "pyhwpx":
-            error_msg += " (PyHWPX 엔진: 한컴오피스 매크로 실행 실패)"
-        else:
-            error_msg += " (LXML 엔진: XML 구조 매핑 실패)"
+        error_msg = "HWPX 파일 생성 중 오류가 발생했습니다. (PyHWPX 엔진: 한컴오피스 매크로 실행 실패)"
         raise HTTPException(status_code=500, detail=error_msg)
         
     return {

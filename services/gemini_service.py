@@ -101,16 +101,37 @@ def _get_analysis_prompt(text: str) -> str:
 def _get_master_brief_instruction() -> str:
     """마스터 브리프 생성을 위한 시스템 지침"""
     return (
-        "당신은 정부지원 사업계획서 작성을 돕는 전문 컨설턴트입니다.\n"
-        "사용자의 아이디어를 바탕으로 사업계획서 각 항목의 '핵심 내용(Master Brief)'을 생성합니다.\n\n"
+        "당신은 정부지원사업 심사위원이자 15년 경력의 전문 비즈니스 컨설턴트입니다.\n"
+        "사용자의 흩어진 아이디어를 바탕으로, 심사위원을 단번에 설득할 수 있는 완벽한 논리 구조를 갖춘 '마스터 브리프(Master Brief)'를 생성합니다.\n\n"
+        
+        "### 💡 마스터 브리프 핵심 내용 및 논리 구조 (반드시 아래 흐름을 포함할 것):\n"
+        "아이디어를 단순히 요약하지 말고, 다음 4가지 핵심 영역(정부지원사업 PSST 표준 구조)으로 세분화하여 심도 있게 전개하세요.\n\n"
+        
+        "1. **[문제 인식 및 개발 필요성]**\n"
+        "   - 타겟 시장 및 고객이 겪고 있는 명확한 페인포인트(Pain-point)와 기존 대안/경쟁 제품의 치명적인 한계점\n"
+        "   - 왜 지금 이 시점에 이 기술/서비스가 반드시 개발되어야 하는지(시의성)와 정부 지원의 당위성\n\n"
+        
+        "2. **[해결 방안 및 기술적 차별성]**\n"
+        "   - 아이디어의 구체적인 제품/서비스 개념 및 이를 구현하는 핵심 기술/작동 원리\n"
+        "   - 경쟁사 대비 압도적인 기술적 비교 우위, 독창성, 그리고 실제 구현 가능성(Feasibility)\n\n"
+        
+        "3. **[시장성 및 사업화 전략]**\n"
+        "   - 명확한 타겟 고객층과 구체적인 초기 시장 진입(Go-To-Market) 전략\n"
+        "   - 현실적인 수익 창출 방안(Business Model)과 중장기 스케일업(Scale-up) 확장 전략\n\n"
+        
+        "4. **[기대효과 및 파급력]**\n"
+        "   - 개발 완료 시 예상되는 기술적 파급력(국산화, 공정 혁신, 효율성 증대 등)\n"
+        "   - 경제/사회적 기대효과(매출 증대, 고용 창출, 수출 기여, 환경/사회적 문제 해결 등)\n\n"
+
         "### 📋 작성 원칙:\n"
-        "1. **강력한 전문성**: 정부 과제 평가위원이 선호하는 전문 용어와 논리적 구조를 사용하세요.\n"
+        "1. **강력한 전문성**: 객관적이고 단호한 어조, 정부 과제 평가위원이 선호하는 전문/산업 용어를 적극 사용하여 신뢰감을 주십시오.\n"
         "2. **가독성 규칙**:\n"
         "   - 모든 하위 항목은 반드시 표준 마크다운 리스트 기호인 하이픈('- ')으로 시작하세요.\n"
         "   - 중점(●), 별표(*), 숫자(1.) 등 다른 기호는 절대 사용하지 마세요.\n"
-        "   - 각 항목 사이에는 반드시 엔터('\n')를 넣어 줄바꿈을 명확히 하세요.\n"
+        "   - 각 항목 사이에는 반드시 엔터('\\n')를 넣어 줄바꿈을 명확히 하세요.\n"
         "   - 항목당 내용은 구체적이고 전문적으로(최소 2~3문장 이상) 작성하세요.\n"
         "3. **언어**: 반드시 한국어로 작성하세요.\n\n"
+        
         "### ⚠️ 절대 금지 사항:\n"
         "- 인사말, 서론, 결론, '알겠습니다' 같은 부연 설명 출력 금지.\n"
         "- 표준 마크다운(하이픈 리스트) 외의 서식 사용 금지."
@@ -208,7 +229,14 @@ async def analyze_structure_stream(text: str, model_id: str = "models/gemini-3-f
         )
         
         full_text = ""
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         async for chunk in response_stream:
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                usage = {
+                    "input_tokens": getattr(chunk.usage_metadata, 'prompt_token_count', 0),
+                    "output_tokens": getattr(chunk.usage_metadata, 'candidates_token_count', 0),
+                    "total_tokens": getattr(chunk.usage_metadata, 'total_token_count', 0)
+                }
             if chunk.text:
                 full_text += chunk.text
                 yield {"status": "analyzing", "message": "문서 구조를 분석하는 중입니다..."}
@@ -217,7 +245,6 @@ async def analyze_structure_stream(text: str, model_id: str = "models/gemini-3-f
         yield {"status": "success", "message": "구조 분석이 완료되었습니다."}
         await asyncio.sleep(0.5)
         
-        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         yield {"status": "completed", "data": {"nodes": final_nodes, "usage": usage}}
 
     except Exception as e:
@@ -240,7 +267,14 @@ async def enhance_business_idea_stream(idea: str, context: str = "", model_id: s
         )
         
         full_markdown = ""
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         async for chunk in response_stream:
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                usage = {
+                    "input_tokens": getattr(chunk.usage_metadata, 'prompt_token_count', 0),
+                    "output_tokens": getattr(chunk.usage_metadata, 'candidates_token_count', 0),
+                    "total_tokens": getattr(chunk.usage_metadata, 'total_token_count', 0)
+                }
             if chunk.text:
                 full_markdown += chunk.text
                 yield {"status": "generating", "data": full_markdown}
@@ -248,7 +282,6 @@ async def enhance_business_idea_stream(idea: str, context: str = "", model_id: s
         yield {"status": "success", "message": "초안 생성이 완료되었습니다."}
         await asyncio.sleep(0.5)
         
-        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         yield {"status": "completed", "data": {"master_brief": full_markdown, "usage": usage}}
 
     except Exception as e:
