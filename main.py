@@ -52,4 +52,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     # 0.0.0.0으로 바인딩하여 모든 인터페이스 허용
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
