@@ -130,8 +130,8 @@ interface AnalysisWorkflowProps {
   fileSize: string | null;
   initialIdeaData?: string;
   pdfUrl?: string | null;
-  onSave: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
-  onExport: (selectedIds: (string | number)[], contentIds: (string | number)[]) => void;
+  onSave: (selectedIds: (string | number)[], contentIds: (string | number)[], treeData?: DocumentNode[]) => void;
+  onExport: (selectedIds: (string | number)[], contentIds: (string | number)[], treeData?: DocumentNode[]) => void;
   onReanalyze?: () => void;
   isAnalyzing?: boolean;
   onFileSelect: (file: File) => void;
@@ -223,12 +223,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     if (treeRef.current) {
         try {
             const { selectedIds, contentIds } = treeRef.current.getSelectedIds();
+            const treeData = treeRef.current.getTreeData();
             await api.saveProject(
                 docId, 
                 props.fileName?.split('.')[0] || 'Draft', 
                 props.fileName || 'document.hwpx', 
                 selectedIds, 
-                contentIds
+                contentIds,
+                treeData
             );
             console.log("[Workflow] Auto-saved tree selection before draft generation.");
             // UI 상태와의 동기화를 위해 부모에도 컴파일된 선택 데이터를 전달
@@ -475,14 +477,16 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const handleTopExport = () => {
     if (treeRef.current) {
       const { selectedIds, contentIds } = treeRef.current.getSelectedIds();
-      props.onExport(selectedIds, contentIds);
+      const treeData = treeRef.current.getTreeData();
+      props.onExport(selectedIds, contentIds, treeData);
     }
   };
 
   const handleTopSave = () => {
     if (treeRef.current) {
       const { selectedIds, contentIds } = treeRef.current.getSelectedIds();
-      props.onSave(selectedIds, contentIds);
+      const treeData = treeRef.current.getTreeData();
+      props.onSave(selectedIds, contentIds, treeData);
     }
   };
 
@@ -608,7 +612,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         {/* Step 2: 사업 아이디어 구축 */}
         <AccordionSection 
            number={2}
-           title="사업 아이디어 구축"
+           title="아이디어 고도화"
            isOpen={activeStep === 2}
            isCompleted={completedSteps.includes(2)}
            onToggle={() => toggleStep(2)}
@@ -947,7 +951,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         {/* Step 3: 데이터 수집 및 초안 작성 */}
         <AccordionSection 
            number={3}
-           title="데이터 수집 및 초안 작성"
+           title="사업계획서 초안 작성"
            isOpen={activeStep === 3}
            isCompleted={completedSteps.includes(3)}
            onToggle={() => toggleStep(3)}
@@ -1148,7 +1152,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                    <div className="flex items-center gap-4">
                        <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
                           <span className="material-symbols-outlined text-sm">info</span>
-                          진행에 문제가 있다면 상태를 초기화하세요.
+                          새로운 초안을 작성하려면 상태를 초기화하세요.
                        </div>
                        <button 
                            onClick={async () => {
@@ -1167,7 +1171,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                            className="px-4 py-2 bg-error/10 text-error hover:bg-error hover:text-white text-[12px] font-black rounded-lg transition-all border border-error/20 shadow-sm hover:shadow-md cursor-pointer flex items-center gap-2 group"
                        >
                            <span className="material-symbols-outlined text-[16px] group-hover:rotate-180 transition-transform">refresh</span>
-                           진행 상태 완전 리셋(서버)
+                           초안 리셋
                        </button>
                    </div>
                    
@@ -1196,7 +1200,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                 className="px-6 py-2.5 ml-4 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-sm font-black rounded-xl border border-transparent shadow-[0_4px_12px_rgba(167,139,250,0.4)] hover:shadow-[0_6px_16px_rgba(167,139,250,0.6)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md transition-all flex items-center gap-2 cursor-pointer"
                             >
                                 <span className="material-symbols-outlined text-lg">description</span>
-                                ✨ 고품질 HWPX 생성
+                                ✨ HWPX 생성(초안)
                             </button>
                         </div>
                    )}
@@ -1208,7 +1212,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         {/* Step 4: 사업계획서 고도화 및 파일 생성 */}
         <AccordionSection 
            number={4}
-           title="사업계획서 고도화 및 파일 생성"
+           title="사업계획서 고도화"
            isOpen={activeStep === 4}
            isCompleted={completedSteps.includes(4)}
            onToggle={() => toggleStep(4)}

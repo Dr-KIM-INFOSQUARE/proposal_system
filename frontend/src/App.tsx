@@ -125,7 +125,7 @@ function App() {
     setUploadMessage(null);
   };
 
-  const handleSave = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[]) => {
+  const handleSave = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[], treeData?: DocumentNode[]) => {
      if (!currentDocumentId) {
          alert("먼저 문서를 업로드해야 합니다.");
          return;
@@ -136,7 +136,8 @@ function App() {
           fileName || "Untitled Project", 
           originalFileName || "Unknown Document",
           selectedNodeIds, 
-          contentNodeIds
+          contentNodeIds,
+          treeData
         );
         alert("프로젝트 상태가 성공적으로 저장되었습니다!");
         loadProjects();
@@ -145,7 +146,7 @@ function App() {
       }
   };
 
-  const handleExport = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[]) => {
+  const handleExport = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[], treeData?: DocumentNode[]) => {
      if (!currentDocumentId) {
          alert("문서가 없습니다.");
          return;
@@ -157,7 +158,8 @@ function App() {
            fileName || "Untitled Project", 
            originalFileName || "Unknown Document",
            selectedNodeIds, 
-           contentNodeIds
+           contentNodeIds,
+           treeData
          );
  
          const res = await api.exportProject(currentDocumentId);

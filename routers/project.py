@@ -649,10 +649,8 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
             # 방어 로직: n이 딕셔너리가 아닌 경우 스킵 (손상된 데이터 대응)
             if not isinstance(n, dict):
                 continue
-            if n.get("id") in selected_set:
-                n["checked"] = True
-            if n.get("id") in content_set:
-                n["contentChecked"] = True
+            n["checked"] = n.get("id") in selected_set
+            n["contentChecked"] = n.get("id") in content_set
             if n.get("children"):
                 apply_checked(n["children"])
                 

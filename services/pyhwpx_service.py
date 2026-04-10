@@ -582,18 +582,20 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                         for c_idx, cell_value in enumerate(row):
                                             hwp.HAction.Run("Cancel") 
                                             hwp.HAction.Run("MoveLineBegin")
-                                            hwp.HAction.Run("SelectAll")
+                                            hwp.HAction.Run("TableCellBlock")
                                             hwp.HAction.Run("Delete")
-                                            
+                                            hwp.HAction.Run("Cancel")
+
                                             insert_text_with_hwpx_newlines(hwp, cell_value, style_config, context="table")
                                             
                                             is_last_of_data = (r_idx == len(table_data) - 1) and (c_idx == len(row) - 1)
+
                                             if not is_last_of_data:
                                                 pos_before = hwp.get_pos()
                                                 hwp.HAction.Run("TableRightCell")
                                                 pos_after = hwp.get_pos()
                                                 if pos_before == pos_after:
-                                                    print("[PYHWPX] ➕ 표 끝 도달 감지. 명시적으로 새 행을 추가합니다.")
+                                                    print("[PYHWPX] ➕ 새 행을 추가합니다.")
                                                     try:
                                                         hwp.TableAppendRow() 
                                                         for _ in range(len(row) - 1): hwp.HAction.Run("TableLeftCell")    

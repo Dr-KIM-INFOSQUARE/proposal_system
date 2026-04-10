@@ -20,6 +20,7 @@ interface DocumentTreeProps {
 
 export interface DocumentTreeRef {
   getSelectedIds: () => { selectedIds: (string | number)[], contentIds: (string | number)[] };
+  getTreeData: () => DocumentNode[];
 }
 
 export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
@@ -40,7 +41,8 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
 
   // Expose getSelectedIds to parent
   useImperativeHandle(ref, () => ({
-    getSelectedIds
+    getSelectedIds,
+    getTreeData: () => treeData
   }));
 
 
