@@ -49,13 +49,13 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
 
   const [paragraphBullets, setParagraphBullets] = useState<Record<string, BulletStyle>>({
     '[L1]': { symbol: '274D', spaces: 2, font_size: 12 }, // 그림자 원
-    '[L2]': { symbol: '25AA', spaces: 4, font_size: 12 }, // 작은 검은색 네모
+    '[L2]': { symbol: '2022', spaces: 4, font_size: 12 }, // 작은 검은색 원
     '[L3]': { symbol: '2578', spaces: 6, font_size: 12 }, // 하이픈
   });
 
   const [tableBullets, setTableBullets] = useState<Record<string, BulletStyle>>({
     '일반': { symbol: '', spaces: 0, font_size: 11 },
-    '[L1]': { symbol: '274D', spaces: 0, font_size: 11 }, // 그림자 원
+    '[L1]': { symbol: '2022', spaces: 0, font_size: 11 }, // 작은 검은색 원
     '[L2]': { symbol: '2578', spaces: 2, font_size: 11 }, // 하이픈
   });
 
