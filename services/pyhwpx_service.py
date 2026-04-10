@@ -7,10 +7,6 @@ import time
 import re
 
 def reset_document_styles(hwp, style_config=None):
-    """
-    문서 전체를 선택하여 꼬여있는 서식을 모조리 날려버리고
-    지정된 기본 서식으로 강제 초기화합니다.
-    """
     print("[PYHWPX] 🧹 본문 전체 서식 강제 초기화를 시작합니다.")
     
     if style_config is None: style_config = {}
@@ -20,25 +16,16 @@ def reset_document_styles(hwp, style_config=None):
     line_spacing = base_style.get("line_spacing", 160)
     alignment = base_style.get("alignment", "Justify")
     
-    # 1. 커서를 강제로 본문 맨 앞으로 이동 (안 그러면 SelectAll이 안 먹힐 수 있음)
     hwp.HAction.Run("Cancel")
     hwp.HAction.Run("MoveDocBegin")
-    
-    # 2. 문서 전체 선택
     hwp.HAction.Run("SelectAll")
-    
-    # 3. [안전 초기화] 템플릿에 존재하는 제목/헤더 등의 원래 폰트 크기 및 굵기는 훼손하지 않기 위해 
-    # 기존에 있던 핵폭탄 초기화(CharShapeNormal 등)는 생략하고, 글꼴, 정렬, 줄간격만 덮어씌웁니다.
     hwp.set_para(AlignType=alignment, LineSpacing=line_spacing, LeftMargin=0, RightMargin=0, PrevSpacing=0, NextSpacing=0,)
     hwp.set_font(FaceName=font_name)
-    
-    # 5. 블록 해제 및 맨 앞으로 이동
     hwp.HAction.Run("Cancel")
     hwp.HAction.Run("MoveDocBegin")
     print("[PYHWPX] ✨ 본문 서식 초기화 완료.")
 
 def parse_markdown_table(md_text: str, skip_header=True) -> list:
-    """LLM이 생성한 마크다운 표에서 구분선과 헤더를 제거하고 순수 데이터 2차원 리스트를 반환합니다."""
     md_text = md_text.replace("||", "|\n|")
     raw_lines = [line.strip() for line in md_text.split('\n') if line.strip()]
     
@@ -52,7 +39,6 @@ def parse_markdown_table(md_text: str, skip_header=True) -> list:
 
     table_lines = [line for line in merged_lines if '|' in line]
     
-    # 2번째 줄(구분선) 제거
     if len(table_lines) > 1 and re.match(r'^[\s\|\-\:]+$', table_lines[1]):
         table_lines.pop(1)
 
@@ -64,27 +50,18 @@ def parse_markdown_table(md_text: str, skip_header=True) -> list:
         if cells:
             rows.append(cells)
             
-    # HWP 양식에 이미 헤더가 있으므로, 마크다운의 헤더 행은 버립니다.
     if skip_header and len(rows) > 0:
         rows.pop(0)
         
     return rows
 
-# 1. 사용자가 나중에 프론트엔드에서 수정할 수 있도록 전역 딕셔너리로 분리
-# 요구사항에 맞게 스페이스 2, 4, 6개 및 동그라미(○), 작은네모(▪), 하이픈(-) 적용
 PROJECT_BULLET_STYLE = {
-    "[L1]": {"spaces": " " * 2, "symbol": "\u25CB"},  # ○ (빈 동그라미)
-    "[L2]": {"spaces": " " * 4, "symbol": "\u25AA"},  # ▪ (꽉 찬 작은 네모)
-    "[L3]": {"spaces": " " * 6, "symbol": "-"}        # - (하이픈)
+    "[L1]": {"spaces": " " * 2, "symbol": "\u25CB"},  
+    "[L2]": {"spaces": " " * 4, "symbol": "\u25AA"},  
+    "[L3]": {"spaces": " " * 6, "symbol": "-"}        
 }
 
-
 def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: str = "paragraph"):
-    """
-    프론트엔드에서 전달받은 스타일(기호, 스페이스)을 적용하여 입력합니다.
-    (로직: 전체 텍스트 입력 -> Home -> Right(기호 뒤로) -> Shift+Tab -> End)
-    """
-    
     if context == "table":
         base_style = style_config.get("table_base_style", {})
         bullet_config = style_config.get("table_bullets", {
@@ -101,7 +78,7 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
         })
         
     font_name = base_style.get("font_family", "휴먼명조")
-    font_size = base_style.get("font_size", 12) # 기본 문서 폰트 크기는 12pt 고정
+    font_size = base_style.get("font_size", 12) 
     line_spacing = base_style.get("line_spacing", 160)
     alignment = base_style.get("alignment", "Justify")
 
@@ -111,8 +88,7 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
     
     for i, line in enumerate(lines):
         line = line.strip()
-        if not line:
-            continue
+        if not line: continue
             
         match = re.match(r'^[\s\*\-]*(\[L\d+\])\s*(.*)', line)
         
@@ -125,58 +101,37 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
             symbol = style.get("symbol", "")
             marker_font_size = style.get("font_size", font_size)
             
-            # 서식 초기화 (꼬임 방지)
             try:
                 hwp.set_para(LeftMargin=0, Indentation=0, AlignType=alignment, LineSpacing=line_spacing)
                 hwp.set_font(FaceName=font_name, Height=marker_font_size, Bold=False)
-            except:
-                pass
+            except: pass
             
             if marker == "[L1]":
                 hwp.HAction.Run("BreakPara")
             
             spaces_str = " " * spaces_count
             
-            # 동그라미 번호 본문 감지 (①~㊿)
-            # 동그라미 기호 자체가 특수 기호 역할을 하도록 덮어씌움
             circled_match = re.match(r'^([①-⑳㉑-㉟㊱-㊿])\s*(.*)', content)
             if circled_match:
                 symbol = circled_match.group(1)
                 content = circled_match.group(2)
             
             if symbol:
-                # 1. 들여쓰기 공백 먼저 주입
                 hwp.insert_text(spaces_str)
-                
-                # 2. 프론트엔드에서 넘어온 4자리 유니코드(기호) 입력
                 hwp.insert_text(symbol)
-                
-                # 3. 한글 순정 액션: 유니코드 -> 특수기호 변환 (Alt+Shift+F10)
-                # 단, symbol이 확실히 4자리 코드일 때만 실행하는 안전장치
                 if len(symbol) == 4:
                     hwp.HAction.Run("InputCodeChange")
-                
-                # 4. 변환된 기호 뒤에 스페이스 한 칸 띄우고 본문 주입
                 hwp.insert_text(f" {content}")
                 
-                # ==========================================
-                # [내어쓰기(Shift+Tab) 열 맞추기 로직]
-                # ==========================================
                 hwp.HAction.Run("MoveParaBegin")
-                
-                # 이동 횟수 = 앞 공백(spaces_count) + 기호(1글자로 변환됨) + 뒤 공백(1) = spaces_count + 2
                 move_steps = spaces_count + 2
                 for _ in range(move_steps):
                     hwp.HAction.Run("MoveRight")
-                
                 hwp.HAction.Run("ParagraphShapeIndentAtCaret")
                 hwp.HAction.Run("MoveParaEnd")
-                
             else:
                 hwp.insert_text(f"{spaces_str}{content}")
-                
         else:
-            # 마커가 없는 일반 텍스트
             normal_style = bullet_config.get("일반", {"spaces": 0, "font_size": font_size})
             normal_spaces = int(normal_style.get("spaces", 0))
             normal_font_size = normal_style.get("font_size", font_size)
@@ -184,24 +139,17 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
             try:
                 hwp.set_para(LeftMargin=0, Indentation=0, AlignType=alignment, LineSpacing=line_spacing)
                 hwp.set_font(FaceName=font_name, Height=normal_font_size, Bold=False)
-            except:
-                pass
+            except: pass
             
-            # 일반 텍스트도 들여쓰기 공간을 주입
             spaces_str = " " * normal_spaces
             hwp.insert_text(f"{spaces_str}{line}")
         
-        # 마지막 줄이 아니면 엔터(줄바꿈)
         if i < len(lines) - 1:
             hwp.HAction.Run("BreakPara")
 
-# pyhwpx 및 win32com은 런타임에 필요한 시점에 임포트합니다. (순환 참조 방지)
-
 def _ensure_hwp_security_registry():
-    """한컴오피스 자동화 보안 팝업 제거를 위한 레지스트리 설정을 확인하고 필요시 업데이트합니다."""
     key_path = r"Software\HNC\HwpAutomation\Modules"
     value_name = "FilePathCheckerModuleExample"
-    # 프로젝트 내의 hwpx_security.dll 절대 경로
     dll_path = os.path.abspath("./resources/hwpx_security.dll")
     
     if not os.path.exists(dll_path):
@@ -209,44 +157,274 @@ def _ensure_hwp_security_registry():
         return
 
     try:
-        # 레지스트리 키 열기 (없으면 생성)
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
-        
-        # 현재 값 확인
         try:
             current_val, _ = winreg.QueryValueEx(key, value_name)
             if current_val == dll_path:
-                # 이미 올바르게 등록되어 있음
                 winreg.CloseKey(key)
                 return
-        except FileNotFoundError:
-            # 값이 없으므로 새로 생성해야 함
-            pass
+        except FileNotFoundError: pass
             
-        # 값 업데이트
         print(f"[PYHWPX] Registering HWP Security Module: {dll_path}")
         winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, dll_path)
         winreg.CloseKey(key)
     except Exception as e:
         print(f"[PYHWPX] Failed to update registry for HWP security: {e}")
 
+# ==========================================
+# 🧹 [정리 도구 모음] 팝업 완벽 제어 & 매크로 롤백
+# ==========================================
+def clean_marker_colors_macro(hwp):
+    """1. 유채색 텍스트 전역 폭격"""
+    target_colors = [
+        255, 16711680, 65280, 16711935, 16776960, 33023, 39423, 8388736,
+        16737792, 12611584, 9917743, 16711808
+    ]
+    pset = hwp.HParameterSet.HFindReplace
+
+    for _ in range(2): 
+        for color in target_colors:
+            hwp.MoveDocBegin()
+            hwp.HAction.GetDefault("AllReplace", pset.HSet)
+            pset.Direction = 2 
+            pset.FindString = "" 
+            pset.ReplaceString = ""
+            pset.ReplaceMode = 1
+            pset.IgnoreMessage = 1
+            pset.FindRegExp = 0 
+            
+            pset.HSet.SetItem("UseFindCharShape", 1)
+            pset.FindCharShape.TextColor = color 
+            pset.HSet.SetItem("FindType", 1) 
+            
+            hwp.HAction.Execute("AllReplace", pset.HSet)
+
+    hwp.HAction.GetDefault("AllReplace", pset.HSet)
+    pset.HSet.SetItem("UseFindCharShape", 0)
+    pset.HSet.SetItem("FindType", 0)
+
+def clean_inline_guides_scanner(hwp):
+    """2. ※ 로 시작하는 꼬리 문장 지능적 삭제"""
+    hwp.MoveDocBegin()
+    prev_pos = None
+    in_delete_mode = False
+    master_loop = 0 
+    last_attempt_pos = None
+    delete_attempts = 0
+    
+    stop_pattern = re.compile(r"^([oㅇ\-•*·○●□■▪⁃]|\(예\)|\d+\.|\[.*?\]|\(.*?\)|[①-⑩]|구분|내용|최종목표|세부목표)")
+
+    while True:
+        master_loop += 1
+        if master_loop > 5000: break
+
+        cur_pos = hwp.GetPos()
+        if cur_pos == prev_pos: break
+        prev_pos = cur_pos
+
+        hwp.HAction.Run("MoveParaBegin")
+        hwp.HAction.Run("MoveSelParaEnd")
+        text = hwp.GetTextFile("TEXT", "saveblock")
+        hwp.HAction.Run("Cancel")
+
+        if text is None: text = ""
+        elif isinstance(text, tuple): text = text[1] if len(text) > 1 else ""
+
+        clean_text = text.replace('\r', '').replace('\n', '').strip()
+
+        if len(clean_text) == 0:
+            in_delete_mode = False
+            hwp.HAction.Run("MoveNextParaBegin")
+            continue
+
+        if clean_text.startswith("※"):
+            in_delete_mode = True
+            if cur_pos == last_attempt_pos: delete_attempts += 1
+            else: last_attempt_pos = cur_pos; delete_attempts = 1
+            if delete_attempts > 3: hwp.HAction.Run("MoveNextParaBegin"); continue
+            
+            hwp.HAction.Run("MoveParaBegin")
+            hwp.HAction.Run("DeleteLine")
+            prev_pos = None
+            continue
+
+        if in_delete_mode:
+            if stop_pattern.match(clean_text):
+                in_delete_mode = False
+                hwp.HAction.Run("MoveNextParaBegin")
+                continue
+            else:
+                if cur_pos == last_attempt_pos: delete_attempts += 1
+                else: last_attempt_pos = cur_pos; delete_attempts = 1
+                if delete_attempts > 3: hwp.HAction.Run("MoveNextParaBegin"); continue
+                
+                hwp.HAction.Run("MoveParaBegin")
+                hwp.HAction.Run("DeleteLine")
+                prev_pos = None
+                continue
+
+        hwp.HAction.Run("MoveNextParaBegin")
+        last_attempt_pos = None
+        delete_attempts = 0
+
+def clean_guide_tables(hwp):
+    """3. '작성 요령' 안내 표 전체 폭파"""
+    keywords = ["작성 요령", "작성 가이드"]
+    for keyword in keywords:
+        hwp.MoveDocBegin()
+        master_loop = 0 
+        while True:
+            master_loop += 1
+            if master_loop > 100: break 
+
+            hwp.HAction.GetDefault("RepeatFind", hwp.HParameterSet.HFindReplace.HSet)
+            hwp.HParameterSet.HFindReplace.HSet.SetItem("UseFindCharShape", 0)
+            hwp.HParameterSet.HFindReplace.FindString = keyword
+            hwp.HParameterSet.HFindReplace.FindRegExp = 0
+            hwp.HParameterSet.HFindReplace.IgnoreMessage = 1
+            hwp.HParameterSet.HFindReplace.Direction = 0 
+            
+            if not hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet): break
+                
+            hwp.HAction.Run("Cancel") 
+            cur_list = hwp.GetPos()[0]
+            
+            if cur_list > 0:
+                hwp.HAction.Run("CloseEx")
+                hwp.HAction.Run("Delete")
+            else:
+                hwp.HAction.Run("MoveParaBegin")
+                hwp.HAction.Run("DeleteLine")
+            hwp.MoveDocBegin() 
+
+def clean_bullets_and_spaces_walker(hwp):
+    """4. 잔여 빈 기호 및 가짜 빈 줄 청소"""
+    hwp.MoveDocBegin()
+    prev_pos = None
+    last_attempt_pos = None
+    delete_attempts = 0 
+    master_loop = 0
+    
+    while True:
+        master_loop += 1
+        if master_loop > 5000: break
+
+        cur_pos = hwp.GetPos()
+        if cur_pos == prev_pos: break
+        prev_pos = cur_pos
+        
+        hwp.HAction.Run("MoveParaBegin")
+        hwp.HAction.Run("MoveSelParaEnd")
+        text = hwp.GetTextFile("TEXT", "saveblock")
+        hwp.HAction.Run("Cancel") 
+        
+        if text is None: text = ""
+        elif isinstance(text, tuple): text = text[1] if len(text) > 1 else ""
+            
+        raw_no_returns = text.replace('\r', '').replace('\n', '')
+        clean_text = raw_no_returns.strip()
+        
+        is_bullet = (len(clean_text) == 1 and clean_text in ["o", "ㅇ", "-", "*", "·", "○", "●", "□", "■", "▪", "⁃", "※"])
+        is_fake_empty = (len(clean_text) == 0 and len(raw_no_returns) > 0)
+        
+        if is_bullet or is_fake_empty:
+            if cur_pos == last_attempt_pos: delete_attempts += 1
+            else: last_attempt_pos = cur_pos; delete_attempts = 1
+            if delete_attempts > 3: hwp.HAction.Run("MoveNextParaBegin"); continue
+                
+            hwp.HAction.Run("MoveParaBegin")
+            hwp.HAction.Run("DeleteLine")
+            prev_pos = None 
+            continue
+            
+        hwp.HAction.Run("MoveNextParaBegin")
+        last_attempt_pos = None
+        delete_attempts = 0
+
+def compress_newlines(hwp):
+    """5. 다중 엔터 압축 (워커 스캐너 방식 - AllReplace 버그 완벽 회피)"""
+    hwp.MoveDocBegin()
+    prev_pos = None
+    empty_line_count = 0
+    master_loop = 0
+    last_attempt_pos = None
+    delete_attempts = 0
+    
+    while True:
+        master_loop += 1
+        if master_loop > 5000: break # 무한루프 절대 방어
+
+        cur_pos = hwp.GetPos()
+        if cur_pos == prev_pos: break
+        prev_pos = cur_pos
+        
+        # 현재 줄 블록 지정 후 텍스트 가져오기
+        hwp.HAction.Run("MoveParaBegin")
+        hwp.HAction.Run("MoveSelParaEnd")
+        text = hwp.GetTextFile("TEXT", "saveblock")
+        hwp.HAction.Run("Cancel") 
+        
+        if text is None: text = ""
+        elif isinstance(text, tuple): text = text[1] if len(text) > 1 else ""
+            
+        clean_text = text.replace('\r', '').replace('\n', '').strip()
+        
+        # 텍스트가 없는 순수 빈 줄일 경우
+        if len(clean_text) == 0:
+            empty_line_count += 1
+            
+            # 🚨 빈 줄이 2번 이상 연속되면 무조건 지워서 1줄의 여백만 남김
+            if empty_line_count >= 2:
+                if cur_pos == last_attempt_pos: delete_attempts += 1
+                else: last_attempt_pos = cur_pos; delete_attempts = 1
+                
+                # 표 끄트머리 등 안 지워지는 특수 구역이면 쿨하게 스킵
+                if delete_attempts > 3: 
+                    hwp.HAction.Run("MoveNextParaBegin")
+                    continue
+                    
+                hwp.HAction.Run("MoveParaBegin")
+                hwp.HAction.Run("DeleteLine")
+                prev_pos = None 
+                
+                # 방금 빈 줄을 지웠어도, 여전히 문단 간격용 빈 줄 1개가 남아있는 상태이므로 1로 유지
+                empty_line_count = 1 
+                continue
+        else:
+            empty_line_count = 0 # 글자가 등장하면 빈 줄 카운터 초기화
+            
+        hwp.HAction.Run("MoveNextParaBegin")
+        last_attempt_pos = None
+        delete_attempts = 0
+
+def run_all_cleanups(hwp):
+    print("[PYHWPX] 🧹 최종 서식 및 가이드라인 클린업을 시작합니다...")
+    
+    # 🚨 마스터 실드 전개: 0x00020011 (확인버튼 0x1 + 경고창 무시 0x10 + 알림창 무시 0x20000)
+    # 한글의 그 어떤 성가신 팝업도 백그라운드 환경에서 서버를 멈추지 못하게 강제 클릭합니다.
+    try: hwp.SetMessageBoxMode(0x00020011) 
+    except Exception: pass
+
+    cleanup_tasks = [
+        ("마커 색상 폭격", clean_marker_colors_macro),
+        ("문맥 인식 가이드라인(※) 삭제", clean_inline_guides_scanner),
+        ("작성 요령 안내 표/글상자 삭제", clean_guide_tables),
+        ("빈 기호 및 가짜 빈줄 청소", clean_bullets_and_spaces_walker),
+        ("다중 엔터 압축", compress_newlines)
+    ]
+
+    for task_name, task_func in cleanup_tasks:
+        try:
+            task_func(hwp)
+            print(f"  ✔️ {task_name} 완료")
+        except Exception as e:
+            print(f"  ⚠️ {task_name} 중 오류 발생: {e}")
+# ==========================================
+
 def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: str, style_config: dict = None) -> bool:
-    """
-    공식 pyhwpx 라이브러리를 사용하여 HWPX 템플릿에 데이터를 주입합니다.
-    - [x] pdf_service.py의 보안 모듈 등록 로직 통합 `_ensure_hwp_security_registry`
-    - [x] generate_hwpx_with_pyhwpx 내 HWP 객체 초기화 방식 변경 (EnsureDispatch)
-    - [x] 문단 이동 로직 정밀화 및 보정 (MoveParaDown + TextCheck)
-    - [x] 표 셀 진입 및 주입 로직 강화 (TableCellBlock)
-    - [ ] 주입 결과 검증 (로그 및 파일 생성 확인)
-    """
-
-    if style_config is None:
-        style_config = {}
-
-    # 1. 보안 레지스트리 확인 및 설정
+    if style_config is None: style_config = {}
     _ensure_hwp_security_registry()
     
-    # [Lazy Import] 서버 시작 시 win32com 캐시 충돌 방지
     try:
         from pyhwpx import Hwp
         import win32com.client
@@ -268,83 +446,55 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
 
     print(f"[PYHWPX] Starting generation for {document_id}")
     hwp = None
-    
-    # OLE 초기화
     pythoncom.CoInitialize()
     
     try:
-        # [1] 한글 객체 생성 및 캐시 방어
-        # EnsureDispatch는 순환 참조 에러(location/partial initialization)를 일으킬 수 있으므로 
-        # 런타임에는 Dispatch를 사용하여 안전하게 객체를 생성합니다.
         try:
-            # win32com 초기화
             dispatch_hwp = win32com.client.DispatchEx('HWPFrame.HwpObject')
             print("[PYHWPX] ✅ HwpObject Dispatch 성공.")
         except Exception as dispatch_err:
             print(f"[PYHWPX] ❌ Dispatch 실패: {dispatch_err}")
             return False
 
-        # pyhwpx 객체 생성 (hwp_object 인자로 기존 객체 래핑 시도)
-        # hwp_object 인자를 지원하지 않는 버그가 있을 수 있으므로 Hwp(visible=False) 후 
-        # 내부 속성인 .hwp 또는 .app를 dispatch_hwp로 교체하거나 그대로 사용합니다.
         hwp = Hwp(visible=False)
-        
-        # [1-A] 보안 모듈 등록 (RegisterModule)
-        # 생성된 객체로부터 직접 등록 시도
         native_hwp = getattr(hwp, "hwp", getattr(hwp, "app", dispatch_hwp))
+        
         try:
             res_reg = dispatch_hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModuleExample")
-            if res_reg:
-                print("[PYHWPX] ✅ 보안 모듈 등록 성공. 보안창이 뜨지 않습니다.")
-            else:
-                # 가끔 RegisterModule이 실제로는 성공했으나 리턴값을 못 받는 경우가 있음
-                print("[PYHWPX] ⚠️ 보안 모듈 리턴값 없음. (이미 등록된 경우일 수 있음)")
+            if res_reg: print("[PYHWPX] ✅ 보안 모듈 등록 성공.")
+            else: print("[PYHWPX] ⚠️ 보안 모듈 리턴값 없음.")
         except AttributeError as attr_err:
-            if 'location' in str(attr_err):
-                # pywin32 고유 버그: 동작은 성공했으나 리턴값 해석 오류임
-                print("[PYHWPX] ✅ 보안 모듈 등록 확인됨. (Hwp 1.7.2 native handling)")
-            else:
-                print(f"[PYHWPX] ❌ 보안 모듈 등록 중 속성 오류: {attr_err}")
+            if 'location' in str(attr_err): print("[PYHWPX] ✅ 보안 모듈 등록 확인됨.")
+            else: print(f"[PYHWPX] ❌ 보안 모듈 등록 중 속성 오류: {attr_err}")
         except Exception as reg_ex:
             print(f"[PYHWPX] ❌ RegisterModule 호출 중 오류: {reg_ex}")
         
-        # [1-B] 소멸자 버그('on_quit' AttributeError) 방지용 속성 주입
-        if not hasattr(hwp, "on_quit"):
-            hwp.on_quit = True
+        if not hasattr(hwp, "on_quit"): hwp.on_quit = True
         
-        # 백그라운드 실행 유지 및 팝업 억제
         try:
-            hwp.SetMessageBoxMode(0x00000000)
+            # 🚨 객체 초기화 단계부터 팝업 방어막을 최대로 올립니다.
+            hwp.SetMessageBoxMode(0x00020011)
             hwp.XHwpWindows.Item(0).Visible = False
-        except:
-            pass
+        except: pass
 
-        # [2] 템플릿 열기
         if not hwp.open(template_path):
             print(f"[PYHWPX] 템플릿 열기 실패: {template_path}")
             return False
 
         reset_document_styles(hwp, style_config)
 
-        # [3] 주입 대상 노드 수집 (content 플래그 최우선 적용)
         targets = []
         fallback_targets = []
-        global_tbl_idx = 0  # 표 순차 부여용 카운터
-
+        global_tbl_idx = 0  
         seen_addrs = set()
 
         def collect_targets(nodes):
             nonlocal global_tbl_idx
             for node in nodes:
                 addr = node.get("node_address")
-                
-                # ==========================================
-                # [핵심 로직] 이미 방명록에 있는 주소면 무시하고 패스!
-                # ==========================================
                 if addr:
-                    if addr in seen_addrs:
-                        continue
-                    seen_addrs.add(addr) # 처음 온 주소면 방명록에 기록
+                    if addr in seen_addrs: continue
+                    seen_addrs.add(addr) 
                     
                 is_content_target = node.get("content") is True
                 content = node.get("draft_content", "").strip()
@@ -353,42 +503,21 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                 
                 if is_content_target and content:
                     if json_type == "table":
-                        # 표는 무조건 순서대로 인덱싱
-                        targets.append({
-                            "type": "tbl",
-                            "index": global_tbl_idx,
-                            "content": content,
-                            "title": title
-                        })
+                        targets.append({"type": "tbl", "index": global_tbl_idx, "content": content, "title": title})
                         global_tbl_idx += 1
                     elif addr:
-                        # 정상 물리 주소가 있는 경우
                         match = re.search(r'(p|tbl)\[(\d+)\]', addr)
                         if match:
-                            targets.append({
-                                "type": match.group(1),
-                                "index": int(match.group(2)),
-                                "content": content,
-                                "title": title
-                            })
+                            targets.append({"type": match.group(1), "index": int(match.group(2)), "content": content, "title": title})
                     else:
-                        fallback_targets.append({
-                            "type": "p",
-                            "content": content,
-                            "title": title
-                        })
+                        fallback_targets.append({"type": "p", "content": content, "title": title})
                 
-                # 자식 탐색 계속 진행
                 if "children" in node and node["children"]:
                     collect_targets(node["children"])
         
         collect_targets(tree_data)
-
-        # [4] 역순 정렬 (인덱스 밀림 방지)
-        # 뒤쪽부터 삽입해야 MoveParaDown 시 앞쪽 문단 구조가 유지됨
         targets.sort(key=lambda x: x["index"], reverse=True)
 
-        # [5] 데이터 주입 (검색 및 셀 기반 정밀 타격)
         for target in targets:
             try:
                 node_type = target.get("type")
@@ -422,11 +551,8 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                         hwp.HAction.Run("Cancel")      
                         hwp.HAction.Run("MoveParaEnd") 
                         hwp.HAction.Run("BreakPara")   
-                        
-                        # 일반 텍스트 문자열 대신 줄바꿈 번역 함수 호출
                         insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
-                        
-                        hwp.HAction.Run("BreakPara") # 다음 목차와의 간격을 위해 한 줄 더 띄움
+                        hwp.HAction.Run("BreakPara") 
                     else:
                         print(f"[PYHWPX] 🚨 탐색 실패. 인덱스({idx}) 지점에 강제 삽입.")
                         try:
@@ -438,9 +564,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                     
                 elif node_type == "tbl":
                     print(f"[PYHWPX] 📊 표 주입 시도: {idx}번째 표 (제목: {title})")
-                    
                     table_data = parse_markdown_table(content, skip_header=True)
-                    
                     ctrl = hwp.HeadCtrl
                     current_tbl_idx = 0
                     
@@ -449,58 +573,38 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                             if current_tbl_idx == idx:
                                 hwp.SetPosBySet(ctrl.GetAnchorPos(0))
                                 hwp.FindCtrl()
-                                
-                                # 1. 표의 첫 번째 셀(A1, 헤더)로 진입 후 블록(선택) 해제
                                 hwp.HAction.Run("ShapeObjTableSelCell") 
                                 hwp.HAction.Run("Cancel") 
-                                
-                                # 2. 첫 번째 데이터 행(A2)으로 한 칸 내려감 (헤더 보호)
                                 hwp.HAction.Run("TableLowerCell")
                                 
                                 if table_data:
                                     for r_idx, row in enumerate(table_data):
                                         for c_idx, cell_value in enumerate(row):
-                                            
-                                            # 기존 텍스트 지우기 (양식 틀 유지)
                                             hwp.HAction.Run("Cancel") 
                                             hwp.HAction.Run("MoveLineBegin")
                                             hwp.HAction.Run("SelectAll")
                                             hwp.HAction.Run("Delete")
                                             
-                                            # 엔터키 번역 함수로 텍스트 입력
                                             insert_text_with_hwpx_newlines(hwp, cell_value, style_config, context="table")
                                             
-                                            # 전체 데이터 중 맨 마지막 셀이 아닐 경우에만 다음 칸으로 이동
                                             is_last_of_data = (r_idx == len(table_data) - 1) and (c_idx == len(row) - 1)
-                                            
                                             if not is_last_of_data:
-                                                # 이동 전 현재 위치(좌표) 기억
                                                 pos_before = hwp.get_pos()
-                                                
-                                                # 우측 셀로 이동 (화살표 기능)
                                                 hwp.HAction.Run("TableRightCell")
-                                                
-                                                # 이동 후 위치(좌표) 확인
                                                 pos_after = hwp.get_pos()
-                                                
-                                                # 좌표가 1mm도 변하지 않았다면? -> 표의 맨 끝 칸에 갇혔다는 뜻!
                                                 if pos_before == pos_after:
                                                     print("[PYHWPX] ➕ 표 끝 도달 감지. 명시적으로 새 행을 추가합니다.")
-                                                    
-                                                    # 사람이 Tab 키를 누른 것과 동일하게 맨 아래에 새 행을 만들어주는 액션
                                                     try:
-                                                        hwp.TableAppendRow() # pyhwpx 내장 래퍼 메서드
-                                                        for _ in range(len(row) - 1):
-                                                            hwp.HAction.Run("TableLeftCell")    
+                                                        hwp.TableAppendRow() 
+                                                        for _ in range(len(row) - 1): hwp.HAction.Run("TableLeftCell")    
                                                     except:
-                                                        hwp.HAction.Run("TableAppendRow") # OLE Raw 액션
-                                                        
+                                                        hwp.HAction.Run("TableAppendRow") 
                                 else:
                                     hwp.HAction.Run("TableCellBlock") 
                                     insert_text_with_hwpx_newlines(hwp, content, style_config, context="table")
                                     hwp.HAction.Run("Cancel")
                                     
-                                hwp.HAction.Run("Cancel") # 표 블록 해제
+                                hwp.HAction.Run("Cancel") 
                                 break
                             current_tbl_idx += 1
                         ctrl = ctrl.Next
@@ -508,18 +612,17 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
             except Exception as target_ex:
                 print(f"[PYHWPX] ❌ Error processing target '{title}': {target_ex}")
 
-        # ==========================================
-        # [수정] pyhwpx 내장 함수를 이용한 쪽 번호 매기기
-        # ==========================================
         print("[PYHWPX] 📄 쪽 번호를 삽입합니다 (BottomCenter).")
         try:
-            # side_char=True 를 주면 양옆에 대시가 붙어 '- 1 -' 형태로 나옵니다.
             hwp.page_num_pos(position='BottomCenter', side_char=True)
         except Exception as e:
             print(f"[PYHWPX] ⚠️ 쪽 번호 삽입 중 오류 (무시됨): {e}")
-        # ==========================================
 
-        # [6] 결과 저장
+        # ==========================================
+        # 🧹 [최종 병합] 완성된 클린업 로직 실행!
+        # ==========================================
+        run_all_cleanups(hwp)
+
         abs_output_path = os.path.abspath(output_path)
         hwp.save_as(abs_output_path)
         print(f"[PYHWPX] 🚀 Generation successful: {abs_output_path}")
@@ -532,56 +635,37 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         return False
         
     finally:
-        # 팝업 억제 설정 롤백
         if hwp:
-            try:
-                hwp.SetMessageBoxMode(0x00000001)
-            except:
-                pass
+            try: hwp.SetMessageBoxMode(0x00000000) # 종료 전에는 안전하게 0(기본값)으로 원상 복구합니다.
+            except: pass
 
-        # ==========================================
-        # 💀 [7] 확실한 종료 및 좀비 프로세스 말살 로직
-        # ==========================================
-        print("[PYHWPX] 🧹 HWP 프로세스 및 메모리 정리를 시작합니다.")
+        print("[PYHWPX] 🧹 HWP 프로세스 및 메모 정리를 시작합니다.")
         if hwp:
             try:
-                # 1. 문서 강제 닫기 (저장 안 함 팝업 방지)
-                try:
-                    hwp.Clear(1)
+                try: hwp.Clear(1)
                 except Exception:
-                    try:
-                        hwp.clear(1)
+                    try: hwp.clear(1)
                     except: pass
                 
-                # 2. 한글 프로그램 종료 명령
-                try:
-                    hwp.Quit()
+                try: hwp.Quit()
                 except Exception:
-                    try:
-                        hwp.quit()
+                    try: hwp.quit()
                     except: pass
-                time.sleep(0.5) # 프로세스가 닫힐 시간 부여
+                time.sleep(0.5) 
             except Exception as quit_err:
                 print(f"[PYHWPX] ⚠️ HWP Quit 중 오류 (무시됨): {quit_err}")
                 
-        # 3. 파이썬 변수(레퍼런스) 강제 삭제 
-        # (COM 객체는 파이썬 변수가 하나라도 물고 있으면 절대 안 죽습니다)
         try:
             if 'hwp' in locals(): del hwp
             if 'dispatch_hwp' in locals(): del dispatch_hwp
             if 'native_hwp' in locals(): del native_hwp
             if 'pset' in locals(): del pset
-        except Exception as del_err:
-            pass
+        except Exception as del_err: pass
 
-        # 4. 파이썬 가비지 컬렉터 강제 호출 (메모리 즉시 싹쓸이)
         import gc
         gc.collect()
 
-        # 5. 윈도우 COM 스레드 초기화 해제
         try:
             pythoncom.CoUninitialize()
             print("[PYHWPX] ✨ COM 스레드 반환 완료. 프로세스가 깨끗하게 종료되었습니다.")
-        except Exception as com_err:
-            pass
-
+        except Exception as com_err: pass
