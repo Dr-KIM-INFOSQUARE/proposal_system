@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export interface BaseStyle {
   font_family: string;
@@ -25,6 +25,8 @@ interface HwpxFormatModalProps {
   documentId: string | null;
   onGenerate: (config: StyleConfig) => Promise<void>;
   isGeneratingExternal?: boolean;
+  detectedParagraphLevels?: string[]; // [신규] 분석된 본문 단계
+  detectedTableLevels?: string[];     // [신규] 분석된 표 단계
 }
 
 export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
@@ -33,6 +35,8 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
   documentId,
   onGenerate,
   isGeneratingExternal = false,
+  detectedParagraphLevels = [],
+  detectedTableLevels = [],
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<'paragraph' | 'table'>('paragraph');
@@ -49,17 +53,57 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
     alignment: 'Center'
   });
 
-  const [paragraphBullets, setParagraphBullets] = useState<Record<string, BulletStyle>>({
-    '[L1]': { symbol: '274D', spaces: 2, font_size: 12 }, // 그림자 원
-    '[L2]': { symbol: '2022', spaces: 4, font_size: 12 }, // 작은 검은색 원
-    '[L3]': { symbol: '2578', spaces: 6, font_size: 12 }, // 하이픈
-  });
+  const [paragraphBullets, setParagraphBullets] = useState<Record<string, BulletStyle>>({});
+  const [tableBullets, setTableBullets] = useState<Record<string, BulletStyle>>({});
 
-  const [tableBullets, setTableBullets] = useState<Record<string, BulletStyle>>({
-    '일반': { symbol: '', spaces: 0, font_size: 11 },
-    '[L1]': { symbol: '2022', spaces: 0, font_size: 11 }, // 작은 검은색 원
-    '[L2]': { symbol: '2578', spaces: 2, font_size: 11 }, // 하이픈
-  });
+  // [신규] 단계별 추천 기본 스타일맵
+  const DEFAULT_STYLES: Record<string, BulletStyle> = {
+    '[L1]': { symbol: '274D', spaces: 2, font_size: 11 }, // ❍ (그림자 원)
+    '[L2]': { symbol: '2022', spaces: 4, font_size: 11 }, // • (작은 검은색 원)
+    '[L3]': { symbol: '2578', spaces: 6, font_size: 11 }, // ⁃ (하이픈)
+    '[L4]': { symbol: '25E6', spaces: 8, font_size: 11 }, // ◦ (작은 투명 원)
+    '[L5]': { symbol: '25AB', spaces: 10, font_size: 11 }, // ▫ (작은 투명 네모)
+  };
+
+  const DEFAULT_TABLE_STYLES: Record<string, BulletStyle> = {
+    '일반':   { symbol: '',     spaces: 0, font_size: 10 },
+    '[L1]': { symbol: '2022', spaces: 0, font_size: 10 }, // •
+    '[L2]': { symbol: '2578', spaces: 2, font_size: 10 }, // ⁃
+    '[L3]': { symbol: '25E6', spaces: 4, font_size: 10 }, // ◦
+  };
+
+  // [신규] 모달이 열리거나 분석된 단계가 변경될 때 초기 상태 설정
+  useEffect(() => {
+    if (isOpen) {
+      // 1. 본문 단계 구성 (분석된 단계 최우선, 없으면 기본 L1~L2 제공)
+      const pLevels = detectedParagraphLevels.length > 0 ? detectedParagraphLevels : ['[L1]', '[L2]'];
+      const newParagraphBullets: Record<string, BulletStyle> = {};
+      
+      pLevels.forEach((lv, idx) => {
+        // 이미 추천 스타일이 있다면 사용, 아니면 순번대로 자동 계산
+        newParagraphBullets[lv] = DEFAULT_STYLES[lv] || { 
+            symbol: '2578', 
+            spaces: (idx + 1) * 2, 
+            font_size: 11 
+        };
+      });
+      setParagraphBullets(newParagraphBullets);
+
+      // 2. 표 단계 구성 ('일반' 필수 포함)
+      const tLevels = detectedTableLevels.length > 0 ? detectedTableLevels : ['[L1]'];
+      const newTableBullets: Record<string, BulletStyle> = { '일반': DEFAULT_TABLE_STYLES['일반'] };
+      
+      tLevels.forEach((lv, idx) => {
+        if (lv === '일반') return;
+        newTableBullets[lv] = DEFAULT_TABLE_STYLES[lv] || { 
+            symbol: '2578', 
+            spaces: (idx + 1) * 2, 
+            font_size: 10 
+        };
+      });
+      setTableBullets(newTableBullets);
+    }
+  }, [isOpen, detectedParagraphLevels, detectedTableLevels]);
 
   if (!isOpen || !documentId) return null;
 

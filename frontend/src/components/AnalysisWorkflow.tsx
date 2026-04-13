@@ -152,6 +152,46 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   
   const [isHwpxModalOpen, setIsHwpxModalOpen] = useState<boolean>(false);
   const [hwpxMode, setHwpxMode] = useState<'draft' | 'enhanced'>('draft');
+  const [detectedLevels, setDetectedLevels] = useState<{paragraph: string[], table: string[]}>({paragraph: [], table: []});
+
+  // [신규] 문서 내용을 분석하여 사용된 단계를 추출하는 함수
+  const analyzeContentLevels = (nodes: DocumentNode[], mode: 'draft' | 'enhanced') => {
+    const pLevels = new Set<string>();
+    const tLevels = new Set<string>();
+
+    const traverse = (n: DocumentNode) => {
+      const content = mode === 'draft' ? n.draft_content : n.extended_content;
+      if (content) {
+        const lines = content.split('\n');
+        let isInTable = false;
+        for (const line of lines) {
+          const trimmed = line.trim();
+          // 마크다운 표 시작 확인 (| 로 시작)
+          if (trimmed.startsWith('|')) {
+            isInTable = true;
+          } else if (trimmed === '') {
+            isInTable = false;
+          }
+
+          const matches = line.match(/\[L\d+\]/g);
+          if (matches) {
+            matches.forEach(m => {
+              if (isInTable) tLevels.add(m);
+              else pLevels.add(m);
+            });
+          }
+        }
+      }
+      if (n.children) n.children.forEach(traverse);
+    };
+
+    nodes.forEach(traverse);
+    
+    return {
+      paragraph: Array.from(pLevels).sort((a, b) => a.localeCompare(b, undefined, {numeric: true})),
+      table: Array.from(tLevels).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}))
+    };
+  };
 
   const handleOpenHwpxModal = async (mode: 'draft' | 'enhanced' = 'draft') => {
     if (!props.documentId) return;
@@ -166,6 +206,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
       }
       
+      // [추가] 단계 자동 분석 실행
+      const levels = analyzeContentLevels(draftTree, mode);
+      setDetectedLevels(levels);
+
       setHwpxMode(mode);
       setIsHwpxModalOpen(true);
     } catch(err) {
@@ -788,7 +832,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 {...props} 
                 ref={treeRef}
                 hideHeader={true} 
-                hideFooter={false} 
+                hideFooter={true} 
                 onStepComplete={() => handleStepCompletion(1)}
             />
           </div>
@@ -1736,6 +1780,8 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           documentId={props.documentId}
           onGenerate={handleGenerateHwpx}
           isGeneratingExternal={isGeneratingHwpx}
+          detectedParagraphLevels={detectedLevels.paragraph}
+          detectedTableLevels={detectedLevels.table}
       />
     </div>
   );
