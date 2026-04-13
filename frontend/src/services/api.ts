@@ -1,6 +1,7 @@
 import type { DocumentNode } from '../types';
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+const BASE_URL = `http://${window.location.hostname}:8000`;
+const API_BASE_URL = `${BASE_URL}/api`;
 
 export const api = {
   uploadDocument: async (file: File, modelId: string = "models/gemini-3-flash-preview") => {
@@ -460,8 +461,8 @@ export const api = {
     return result;
   },
 
-  exportHwpx: async (documentId: string) => {
-    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx`);
+  exportHwpx: async (documentId: string, mode: string = "draft") => {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/export_hwpx?mode=${mode}`);
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ detail: response.statusText }));
         throw new Error(errorData.detail || `Export failed: ${response.statusText}`);
@@ -469,11 +470,16 @@ export const api = {
     const data = await response.json();
     return {
         ...data,
-        download_url: data.download_url ? `http://127.0.0.1:8000${data.download_url}` : undefined
+        download_url: data.download_url ? `http://${window.location.hostname}:8000${data.download_url}` : undefined
     };
   },
 
-  generateHwpx: async (documentId: string, styleConfig: Record<string, any>) => {
+  generateHwpxStream: async (
+    documentId: string, 
+    styleConfig: Record<string, any>, 
+    mode: string = "draft",
+    onProgress: (msg: string) => void
+  ) => {
     const response = await fetch(`${API_BASE_URL}/generate-hwpx`, {
       method: 'POST',
       headers: {
@@ -482,18 +488,154 @@ export const api = {
       body: JSON.stringify({
         document_id: documentId,
         style_config: styleConfig,
+        mode: mode
       }),
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(errorData.detail || `HWPX Generation failed: ${response.statusText}`);
+      throw new Error(`HWPX Generation failed: ${response.statusText}`);
     }
-    
-    const data = await response.json();
-    return {
-      ...data,
-      download_url: data.download_url ? `http://127.0.0.1:8000${data.download_url}` : undefined
-    };
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.substring(6));
+            if (data.status === 'error') {
+              throw new Error(data.message || 'Stream reported error');
+            }
+            if (data.message) onProgress(data.message);
+            if (data.status === 'completed') {
+                result = {
+                    download_url: data.download_url ? `http://${window.location.hostname}:8000${data.download_url}` : undefined,
+                    filename: data.filename
+                };
+            }
+          } catch (e) {
+            console.error("Parse error in HWPX stream", e);
+          }
+        }
+      }
+    }
+    return result;
+  },
+
+  /**
+   * 고도화 작업을 위한 스트림 API
+   */
+  enhanceDraftStream: async (
+    documentId: string,
+    runDeepResearch: boolean = false,
+    onProgress: (msg: string) => void,
+    onNodeEnhanced?: (nodeId: string | number, content: string) => void
+  ) => {
+    console.log(`[API] Starting enhanceDraftStream for ${documentId} (Research: ${runDeepResearch})`);
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/enhance/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        run_deep_research: runDeepResearch
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new Error(`Enhancement failed: ${response.statusText} (${errorText})`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalTree = null;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const rawData = line.substring(6).trim();
+            if (!rawData) continue;
+            
+            try {
+              const data = JSON.parse(rawData);
+              
+              if (data.status === 'error') {
+                throw new Error(data.message || 'Stream reported error');
+              }
+              
+              if (data.status === 'completed') {
+                finalTree = data.tree;
+              } else if (data.status === 'node_enhanced' && onNodeEnhanced) {
+                onNodeEnhanced(data.node_id, data.content);
+              } else if (data.status) {
+                onProgress(data.status);
+              }
+            } catch (err) {
+              console.error("[API] JSON parse error in enhancement stream:", err);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[API] ERROR during enhancement stream reading:", err);
+      throw err;
+    }
+
+    return finalTree;
+  },
+
+  /**
+   * 실행 중인 고도화 작업을 중단합니다.
+   */
+  async cancelEnhance(documentId: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/enhance/cancel`, {
+      method: 'POST',
+    });
+    return response.json();
+  },
+
+  async getEnhanceStatus(documentId: string): Promise<{ is_running: boolean; last_message: string }> {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/enhance/check`);
+    if (!response.ok) return { is_running: false, last_message: "" };
+    return response.json();
+  },
+
+  /**
+   * 고도화 내용(extended_content)만 리셋합니다.
+   */
+  async resetEnhance(documentId: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/enhance/reset`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Reset failed: ${response.statusText}`);
+    }
+    return response.json();
   }
 };

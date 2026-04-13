@@ -47,18 +47,20 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
 
 
   useEffect(() => {
-    // 트리 데이터 초기 로드 시 모든 항목을 기본적으로 체크 상태로 설정
+    // 트리 데이터 초기 로드 시 기존 상태가 있으면 유지하고, 없으면 기본값 설정
     const initializeTree = (nodes: DocumentNode[]): DocumentNode[] => {
       return nodes.map(node => {
         const hasChildren = node.children && node.children.length > 0;
+        
+        // 중요: node.checked가 명시적으로 boolean 타입이고 데이터가 존재하는 경우에만 그 값을 따름
+        // 만약 node.checked가 없거나 null이라면 초기 상태이므로 true(전체 선택)로 설정함
+        const isSelected = (typeof node.checked === 'boolean') ? node.checked : true;
+        const isContentSelected = (typeof node.contentChecked === 'boolean') ? node.contentChecked : !hasChildren;
+        
         return {
           ...node,
-          // 섹션 선택은 모두 기본 체크
-          checked: node.checked !== undefined ? node.checked : true,
-          // 컨텐츠 작상 대상은 하위 항목이 없을 때만 기본 체크
-          contentChecked: node.contentChecked !== undefined 
-            ? node.contentChecked 
-            : !hasChildren,
+          checked: isSelected,
+          contentChecked: isContentSelected,
           children: node.children ? initializeTree(node.children) : []
         };
       });
@@ -66,8 +68,8 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
     
     if (initialTreeData.length > 0) {
        setTreeData(initializeTree(initialTreeData));
-       // 분석이 완료되었으므로 1단계 완료 처리
-       onStepComplete?.();
+       // 주의: 여기서 onStepComplete(자동 완료 처리)를 호출하지 않고, 
+       // 사용자가 데이터를 확인하거나 저장한 후에 넘어가도록 흐름 조절 가능
     }
   }, [initialTreeData]);
 
@@ -238,7 +240,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
                         <div className="flex items-center gap-4">
                             {pdfUrl && (
                                 <a 
-                                    href={`http://127.0.0.1:8000${pdfUrl}`} 
+                                    href={`http://${window.location.hostname}:8000${pdfUrl}`} 
                                     target="_blank" 
                                     rel="noreferrer"
                                     className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1"
@@ -257,7 +259,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
                     <div className="flex-1 bg-surface-container-lowest relative">
                         {pdfUrl ? (
                             <iframe 
-                                src={`http://127.0.0.1:8000${pdfUrl}#toolbar=0`} 
+                                src={`http://${window.location.hostname}:8000${pdfUrl}#toolbar=0`} 
                                 className="w-full h-full border-none"
                                 title="PDF Preview"
                             />

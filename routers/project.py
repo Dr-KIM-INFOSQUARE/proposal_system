@@ -12,7 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
-from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest, HwpxGenerateRequest
+from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest, HwpxGenerateRequest, EnhanceGenerateRequest
 from services.pdf_service import convert_hwpx_to_pdf
 from services.gemini_service import enhance_business_idea
 from services.notebooklm_service import notebooklm_service
@@ -43,6 +43,8 @@ class DraftingManager:
         self.queues = defaultdict(list)
         # document_id -> 마지막 상태 메시지 (새로고침 시 복구용)
         self.last_status = {}
+        # document_id -> 메시지 히스토리 (SSE 연결 지연 시 누락 방지)
+        self.status_history = defaultdict(list)
 
     def is_running(self, document_id: str) -> bool:
         task = self.tasks.get(document_id)
@@ -54,6 +56,7 @@ class DraftingManager:
             return
         
         # 실제 코루틴 실행
+        self.status_history[document_id] = [] # 히스토리 초기화
         task = asyncio.create_task(coro_func())
         self.tasks[document_id] = task
         self.last_status[document_id] = "백그라운드 작업 시작 중..."
@@ -66,11 +69,14 @@ class DraftingManager:
         if document_id in self.tasks:
             del self.tasks[document_id]
         
-        # 대기 중인 큐들에게 종료 알림 (필요 시)
+        # 대기 중인 큐들에게 종료 알림
         for q in self.queues[document_id]:
-            q.put_nowait(None) # None은 종료 신호로 활용 가능
+            q.put_nowait(None)
         
         self.queues[document_id] = []
+        # 히스토리는 잠시 유지했다가 다른 곳에서 정리하거나 혹은 여기서 정리
+        # (너무 빨리 지우면 마지막 완료 메시지 수신 전에 지워질 수 있음)
+        # 여기서는 유지하고, start_task 시점에 초기화하도록 변경
         print(f"[MANAGER] Cleaned up task for {document_id}")
 
     def cancel_task(self, document_id: str):
@@ -84,6 +90,7 @@ class DraftingManager:
     async def broadcast(self, document_id: str, message: str):
         """진행 상황을 모든 연결된 큐에 전파합니다."""
         self.last_status[document_id] = message
+        self.status_history[document_id].append(message)
         queues = self.queues.get(document_id, [])
         for q in queues:
             await q.put(message)
@@ -101,6 +108,8 @@ class DraftingManager:
 
 # 전역 매니저 인스턴스
 drafting_manager = DraftingManager()
+enhancement_manager = DraftingManager() 
+hwpx_manager = DraftingManager() # HWPX 생성 전용 매니저 추가
 
 def log_usage(document_id: str, model_id: str, usage: dict, db: Session, task_type: str = "analysis"):
     """토큰 사용량을 계산하고 DB에 기록합니다."""
@@ -596,8 +605,19 @@ async def list_projects(
         # 1단계: 분석(Analysis) 유무 확인 (아이디어나 초안이 있으면 분석도 당연히 완료된 것)
         is_analysis_done = (p.selected_node_ids is not None and len(p.selected_node_ids) > 0) or is_idea_done
 
-        # 4단계: 완성(Proposal Complete)
-        is_final_complete = False
+        # 4단계: 완성(Proposal Complete) - 고도화 내용 유무 확인
+        has_any_enhanced = False
+        if p.parsed_tree:
+            def check_enhanced_content(nodes):
+                if not nodes or not isinstance(nodes, list): return False
+                for n in nodes:
+                    if not isinstance(n, dict): continue
+                    if n.get("extended_content") and len(n["extended_content"].strip()) > 0: return True
+                    if n.get("children") and check_enhanced_content(n["children"]): return True
+                return False
+            has_any_enhanced = check_enhanced_content(p.parsed_tree)
+        
+        is_final_complete = has_any_enhanced
 
         statuses = {
             "analysis": is_analysis_done,
@@ -709,18 +729,19 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
             project.parsed_tree = tree
             db.commit()
     
-    selected_set = set(project.selected_node_ids or [])
-    content_set = set(project.content_node_ids or [])
+    # ID 타입 불일치(int vs str) 방지를 위해 모두 문자열로 변환하여 비교
+    selected_set = {str(i) for i in (project.selected_node_ids or [])}
+    content_set = {str(i) for i in (project.content_node_ids or [])}
     
     def apply_checked(nodes):
         if not nodes or not isinstance(nodes, list):
             return
         for n in nodes:
-            # 방어 로직: n이 딕셔너리가 아닌 경우 스킵 (손상된 데이터 대응)
             if not isinstance(n, dict):
                 continue
-            n["checked"] = n.get("id") in selected_set
-            n["contentChecked"] = n.get("id") in content_set
+            node_id = str(n.get("id", ""))
+            n["checked"] = node_id in selected_set
+            n["contentChecked"] = node_id in content_set
             if n.get("children"):
                 apply_checked(n["children"])
                 
@@ -909,7 +930,11 @@ async def generate_draft_stream(
 
 
 @router.get("/projects/{document_id}/export_hwpx")
-async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
+async def export_project_hwpx(
+    document_id: str, 
+    mode: str = "draft",  # "draft" 또는 "enhanced"
+    db: Session = Depends(get_db)
+):
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -925,64 +950,117 @@ async def export_project_hwpx(document_id: str, db: Session = Depends(get_db)):
         except:
             tree_data = []
 
-    output_filename = f"{document_id}_draft.hwpx"
+    # 출력 파일명에 모드 포함
+    output_filename = f"{document_id}_{mode}.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
-    print(f"[BACKEND] Exporting {document_id} using PyHWPX engine (native automation)...")
-    success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path)
+    print(f"[BACKEND] Exporting {document_id} (Mode: {mode}) using PyHWPX engine...")
+    success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path, mode=mode)
     
     if not success:
-        # 생성 실패 시 에러 보고
-        error_msg = "HWPX 파일 생성 중 오류가 발생했습니다. (PyHWPX 엔진: 한컴오피스 매크로 실행 실패)"
+        error_msg = f"HWPX 파일 생성 중 오류가 발생했습니다. (모드: {mode})"
         raise HTTPException(status_code=500, detail=error_msg)
+        
+    display_name = f"{project.name}_고도화.hwpx" if mode == "enhanced" else f"{project.name}_초안.hwpx"
         
     return {
         "status": "success", 
         "download_url": f"/api/projects/download/{output_filename}",
-        "filename": f"{project.name}_초안.hwpx"
+        "filename": display_name
     }
 
 @router.post("/generate-hwpx")
 async def generate_hwpx_custom(request: HwpxGenerateRequest, db: Session = Depends(get_db)):
-    """프론트엔드에서 전달받은 스타일 설정을 적용하여 HWPX 파일을 생성합니다."""
+    """프론트엔드에서 전달받은 스타일 설정을 적용하여 HWPX 파일을 생성합니다. SSE 스트리밍 지원."""
     document_id = request.document_id
     style_config = request.style_config
-    
+    mode = request.mode or "draft"
+
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
     if not project.parsed_tree:
-        raise HTTPException(status_code=400, detail="Draft content is empty.")
-        
+        raise HTTPException(status_code=400, detail="Content is empty.")
+    
     tree_data = project.parsed_tree
-    if isinstance(tree_data, str):
-        try:
-            tree_data = json.loads(tree_data)
-        except:
-            tree_data = []
-
-    output_filename = f"{document_id}_styled.hwpx"
+    output_filename = f"{document_id}_styled_{mode}.hwpx"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
-    
-    # 동적 스타일 설정을 적용하기 위해 pyhwpx 엔진을 사용합니다.
-    print(f"[BACKEND] Generating styled HWPX for {document_id} using PyHWPX...")
-    
-    # pyhwpx_service.py의 generate_hwpx_with_pyhwpx 함수가 style_config를 받도록 수정되어야 함
-    # 현재 pyhwpx_service.py의 시그니처가 (document_id, tree_data, output_path)이므로 
-    # 내부적으로 style_config를 넘길 수 있도록 수정이 필요합니다.
-    # 일단은 호환성을 고려하여 style_config를 세션/전역 등에 넘기거나 함수를 수정합니다.
-    
-    success = generate_hwpx_with_pyhwpx(document_id, tree_data, output_path, style_config=style_config)
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="HWPX 파일 생성 중 오류가 발생했습니다.")
+
+    # 메인 루프 캡처
+    main_loop = asyncio.get_running_loop()
+
+    async def run_hwpx_gen():
+        try:
+            print(f"[HWPX] Starting generation task for {document_id}")
+            await hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": "[PYHWPX] HWPX 엔진 초기화 중..."}, ensure_ascii=False))
+            
+            def progress_callback(msg):
+                try:
+                    # 터미널과 동일한 느낌을 위해 [PYHWPX] 접두사 추가
+                    full_msg = f"[PYHWPX] {msg}"
+                    asyncio.run_coroutine_threadsafe(
+                        hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": full_msg}, ensure_ascii=False)),
+                        main_loop
+                    )
+                except Exception as e:
+                    print(f"[HWPX] Callback Error: {e}")
+
+            # PyHWPX 작업은 별도 스레드에서 수행 (COM 초기화 필요성 때문)
+            success = await main_loop.run_in_executor(
+                None, 
+                lambda: generate_hwpx_with_pyhwpx(
+                    document_id, 
+                    tree_data, 
+                    output_path, 
+                    style_config=style_config, 
+                    mode=mode,
+                    on_progress=progress_callback
+                )
+            )
+
+            if success:
+                display_name = f"{project.name}_고도화_최종.hwpx" if mode == "enhanced" else f"{project.name}_초안_최종.hwpx"
+                await hwpx_manager.broadcast(document_id, json.dumps({
+                    "status": "completed", 
+                    "message": "[PYHWPX] HWPX 파일이 성공적으로 생성되었습니다.",
+                    "download_url": f"/api/projects/download/{output_filename}",
+                    "filename": display_name
+                }, ensure_ascii=False))
+            else:
+                await hwpx_manager.broadcast(document_id, json.dumps({"status": "error", "message": "[PYHWPX] HWPX 생성 엔진에서 오류가 발생했습니다."}, ensure_ascii=False))
+        except Exception as e:
+            print(f"[HWPX] Error: {str(e)}")
+            traceback.print_exc()
+            await hwpx_manager.broadcast(document_id, json.dumps({"status": "error", "message": f"시스템 오류: {str(e)}"}, ensure_ascii=False))
+
+    # 이미 실행 중이면 세션 연결만, 아니면 새로 시작
+    if not hwpx_manager.is_running(document_id):
+        await hwpx_manager.start_task(document_id, run_hwpx_gen)
+
+    # SSE 이벤트 제너레이터
+    async def event_generator():
+        q = hwpx_manager.subscribe(document_id)
         
-    return {
-        "status": "success", 
-        "download_url": f"/api/projects/download/{output_filename}",
-        "filename": f"{project.name}_최종.hwpx"
-    }
+        # 기존 히스토리 먼저 전송
+        for old_msg in hwpx_manager.status_history[document_id]:
+            yield f"data: {old_msg}\n\n"
+
+        try:
+            while True:
+                msg = await q.get()
+                if msg is None: break
+                yield f"data: {msg}\n\n"
+                
+                try:
+                    data = json.loads(msg)
+                    if data.get("status") in ["completed", "error"]:
+                        break
+                except: pass
+        finally:
+            hwpx_manager.unsubscribe(document_id, q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.get("/projects/download/{filename}")
 async def download_project_file(filename: str):
@@ -1007,13 +1085,17 @@ async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
     project.research_mode = None
     project.persona_injected = 0
     
-    # 2. parsed_tree 내의 모든 노드에 대해 'content' 및 'draft_content' 필드 초기화
+    # 2. parsed_tree 내의 모든 노드에 대해 'content' 및 'draft_content', 'extended_content' 필드 초기화
     def clear_content_recursive(nodes):
         if not nodes or not isinstance(nodes, list):
             return
         for node in nodes:
+            # 초안 및 고도화 내용 모두 초기화
             if "draft_content" in node:
                 node["draft_content"] = None
+            if "extended_content" in node:
+                node["extended_content"] = None
+                
             if "children" in node and node["children"]:
                 clear_content_recursive(node["children"])
     
@@ -1024,7 +1106,160 @@ async def reset_project_draft(document_id: str, db: Session = Depends(get_db)):
         project.parsed_tree = new_tree
         
     db.commit()
-    return {"status": "success", "message": "모든 진행 상태와 초안 데이터가 초기화되었습니다."}
+    return {"status": "success", "message": "모든 진행 상태와 초안 데이터가 초기화되었습니다.", "tree": project.parsed_tree}
+
+# --- 고도화 (Enhancement) 관련 엔드포인트 ---
+
+@router.post("/projects/{document_id}/enhance/generate")
+async def generate_enhanced_draft(
+    document_id: str,
+    req: EnhanceGenerateRequest,
+    db: Session = Depends(get_db)
+):
+    """사업계획서 초안을 전문가 수준으로 고도화합니다 (백그라운드 실행)."""
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    if not project.notebook_id:
+        raise HTTPException(status_code=400, detail="초안 작성이 먼저 완료되어야 고도화가 가능합니다.")
+    
+    if enhancement_manager.is_running(document_id):
+        return {"status": "already_running", "message": "고도화 작업이 이미 진행 중입니다."}
+
+    # 백그라운드 태스크 정의
+    async def run_enhance():
+        try:
+            generator = notebooklm_service.generate_enhanced_draft_stream(
+                document_id=document_id,
+                notebook_id=project.notebook_id,
+                document_tree=project.parsed_tree or [],
+                run_deep_research=req.run_deep_research,
+                project_name=project.name
+            )
+            
+            async for chunk in generator:
+                data = json.loads(chunk)
+                
+                # 실시간 노드 업데이트 처리
+                if data.get("status") == "node_enhanced":
+                    node_id = data.get("node_id")
+                    content = data.get("content")
+                    
+                    # DB 세션 로컬 생성 (백그라운드 스레드 안전)
+                    from models.database import SessionLocal as BackgroundSession
+                    with BackgroundSession() as bdb:
+                        b_project = bdb.query(Project).filter(Project.document_id == document_id).first()
+                        if b_project and b_project.parsed_tree:
+                            import copy
+                            updated_tree = copy.deepcopy(b_project.parsed_tree)
+                            
+                            def update_node_recursive(nodes):
+                                for n in nodes:
+                                    if n.get("id") == node_id:
+                                        n["extended_content"] = content
+                                        return True
+                                    if n.get("children") and update_node_recursive(n["children"]):
+                                        return True
+                                return False
+                            
+                            if update_node_recursive(updated_tree):
+                                b_project.parsed_tree = updated_tree
+                                bdb.commit()
+                                print(f"[ENHANCE] Node {node_id} saved to DB.")
+                
+                # 모든 상태 메시지 브로드캐스트
+                await enhancement_manager.broadcast(document_id, chunk)
+                
+        except asyncio.CancelledError:
+            print(f"[ENHANCE] Task cancelled for {document_id}")
+            await enhancement_manager.broadcast(document_id, json.dumps({"status": "error", "message": "작업이 사용자에 의해 중단되었습니다."}))
+        except Exception as e:
+            print(f"[ENHANCE] Task error: {str(e)}")
+            traceback.print_exc()
+            await enhancement_manager.broadcast(document_id, json.dumps({"status": "error", "message": str(e)}))
+
+    # 태스크가 실행 중이지 않다면 새로 시작
+    if not enhancement_manager.is_running(document_id):
+        await enhancement_manager.start_task(document_id, run_enhance)
+    else:
+        print(f"[BACKEND] Connecting to existing enhancement task for {document_id}")
+
+    # SSE 이벤트 제너레이터
+    async def event_generator():
+        q = enhancement_manager.subscribe(document_id)
+        print(f"[SSE] Client connected to enhancement queue for {document_id}")
+        
+        # 복구 메시지 (새로고침 대응)
+        if enhancement_manager.last_status.get(document_id):
+            yield f"data: {enhancement_manager.last_status[document_id]}\n\n"
+
+        try:
+            while True:
+                msg = await q.get()
+                if msg is None: break
+                yield f"data: {msg}\n\n"
+                
+                try:
+                    data = json.loads(msg)
+                    if data.get("status") in ["completed", "error", "cancelled"]:
+                        break
+                except: pass
+        except asyncio.CancelledError:
+            print(f"[SSE] Client disconnected (Enhance) for {document_id}")
+        finally:
+            enhancement_manager.unsubscribe(document_id, q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.get("/projects/{document_id}/enhance/check")
+async def check_enhance_status(document_id: str):
+    """현재 고도화 작업이 진행 중인지 단순 상태를 반환합니다 (JSON)."""
+    is_running = enhancement_manager.is_running(document_id)
+    last_msg = ""
+    last = enhancement_manager.last_status.get(document_id)
+    if last:
+        import json
+        try:
+            data = json.loads(last)
+            last_msg = data.get("status") or data.get("message") or ""
+        except: pass
+        
+    return {"is_running": is_running, "last_message": last_msg}
+
+@router.post("/projects/{document_id}/enhance/cancel")
+async def cancel_enhance(document_id: str):
+    """진행 중인 고도화 작업을 중단합니다."""
+    success = enhancement_manager.cancel_task(document_id)
+    if success:
+        return {"status": "success", "message": "고도화 작업이 중단되었습니다."}
+    return {"status": "error", "message": "중단할 작업이 없거나 이미 완료되었습니다."}
+
+@router.post("/projects/{document_id}/enhance/reset")
+async def reset_enhanced_draft(document_id: str, db: Session = Depends(get_db)):
+    """사업계획서의 고도화 내용(extended_content)만 초기화합니다."""
+    project = db.query(Project).filter(Project.document_id == document_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    if not project.parsed_tree:
+        return {"status": "success", "message": "초기화할 데이터가 없습니다."}
+
+    import copy
+    updated_tree = copy.deepcopy(project.parsed_tree)
+    
+    def reset_node_recursive(nodes):
+        for n in nodes:
+            if "extended_content" in n:
+                n["extended_content"] = None
+            if n.get("children"):
+                reset_node_recursive(n["children"])
+                
+    reset_node_recursive(updated_tree)
+    project.parsed_tree = updated_tree
+    
+    db.commit()
+    return {"status": "success", "message": "고도화 데이터가 초기화되었습니다."}
 
 @router.delete("/projects/{document_id}")
 async def delete_project(document_id: str, db: Session = Depends(get_db)):

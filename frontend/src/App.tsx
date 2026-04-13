@@ -44,6 +44,11 @@ function App() {
           setProjectList(list);
       } catch (err) {
           console.error("Failed to load projects", err);
+          // 8000번 포트 통신 실패 시 사용자에게 알림 (방화벽이나 백엔드 다운 확인용)
+          if (err instanceof Error) {
+            alert(`서버(Port 8000)와 통신할 수 없습니다.\n접속 주소: ${window.location.hostname}\n사유: ${err.message}`);
+            console.error("API Connection Error:", err.message);
+          }
       }
   };
 
@@ -139,6 +144,7 @@ function App() {
           contentNodeIds,
           treeData
         );
+        if (treeData) setTreeData(treeData);
         alert("프로젝트 상태가 성공적으로 저장되었습니다!");
         loadProjects();
       } catch (err) {
@@ -340,6 +346,7 @@ function App() {
                 onSave={handleSave} 
                 onExport={handleExport} 
                 onReanalyze={handleReanalyze}
+                onSetTreeData={setTreeData}
                 isAnalyzing={isUploading}
                 uploadMessage={uploadMessage}
                 onEnhanceStateChange={(active: boolean, msg?: string) => {

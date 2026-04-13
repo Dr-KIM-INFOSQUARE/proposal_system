@@ -24,6 +24,7 @@ interface HwpxFormatModalProps {
   onClose: () => void;
   documentId: string | null;
   onGenerate: (config: StyleConfig) => Promise<void>;
+  isGeneratingExternal?: boolean;
 }
 
 export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
@@ -31,6 +32,7 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
   onClose,
   documentId,
   onGenerate,
+  isGeneratingExternal = false,
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<'paragraph' | 'table'>('paragraph');
@@ -113,13 +115,14 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
       console.error('HWPX 생성 중 오류가 발생했습니다:', error);
     } finally {
       setIsGenerating(false);
-      onClose();
+      // 부모에서 HWPX 생성이 완료되면 닫도록 변경 (isGeneratingExternal 연동을 위해)
+      // onClose(); 
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md transition-all animate-in fade-in duration-300">
-      <div className="relative w-full max-w-[680px] bg-white rounded-[24px] shadow-[0_24px_60px_-15px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col max-h-[90vh] ring-1 ring-black/5">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-all animate-in fade-in duration-300">
+      <div className={`relative w-full max-w-[680px] bg-white rounded-[24px] shadow-[0_24px_60px_-15px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col max-h-[90vh] ring-1 ring-black/5 transition-all duration-500 ${isGeneratingExternal ? 'blur-md pointer-events-none scale-[0.98]' : ''}`}>
         
         {/* Header */}
         <div className="px-7 py-6 border-b border-outline-variant/10 flex justify-between items-center bg-white relative">

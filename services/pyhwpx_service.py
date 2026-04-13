@@ -397,11 +397,11 @@ def compress_newlines(hwp):
         last_attempt_pos = None
         delete_attempts = 0
 
-def run_all_cleanups(hwp):
-    print("[PYHWPX] 🧹 최종 서식 및 가이드라인 클린업을 시작합니다...")
+def run_all_cleanups(hwp, on_progress=None):
+    def _log(msg):
+        if on_progress: on_progress(f"  ✔️ {msg}")
     
-    # 🚨 마스터 실드 전개: 0x00020011 (확인버튼 0x1 + 경고창 무시 0x10 + 알림창 무시 0x20000)
-    # 한글의 그 어떤 성가신 팝업도 백그라운드 환경에서 서버를 멈추지 못하게 강제 클릭합니다.
+    # 🚨 마스터 실드 전개: 0x00020011
     try: hwp.SetMessageBoxMode(0x00020011) 
     except Exception: pass
 
@@ -416,12 +416,16 @@ def run_all_cleanups(hwp):
     for task_name, task_func in cleanup_tasks:
         try:
             task_func(hwp)
-            print(f"  ✔️ {task_name} 완료")
+            _log(f"{task_name} 완료")
         except Exception as e:
-            print(f"  ⚠️ {task_name} 중 오류 발생: {e}")
-# ==========================================
+            _log(f"{task_name} 중 오류 발생: {e}")
 
-def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: str, style_config: dict = None) -> bool:
+def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: str, style_config: dict = None, mode: str = "draft", on_progress=None) -> bool:
+    def _log(msg):
+        print(f"[PYHWPX] {msg}")
+        if on_progress:
+            on_progress(msg)
+
     if style_config is None: style_config = {}
     _ensure_hwp_security_registry()
     
@@ -429,31 +433,39 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         from pyhwpx import Hwp
         import win32com.client
     except ImportError:
-        print("[PYHWPX] 'pyhwpx' 또는 'pywin32' 모듈을 찾을 수 없습니다.")
+        _log("'pyhwpx' 또는 'pywin32' 모듈을 찾을 수 없습니다.")
         return False
 
     UPLOAD_DIR = "uploads"
     template_path = None
     
     if os.path.exists(UPLOAD_DIR):
-        candidates = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(document_id) and f.endswith(".hwpx") and not f.endswith("_draft.hwpx") and not f.endswith("_styled.hwpx")]
+        candidates = [
+            f for f in os.listdir(UPLOAD_DIR) 
+            if f.startswith(document_id) 
+            and f.endswith(".hwpx") 
+            and "_styled" not in f 
+            and "_draft" not in f 
+            and "_enhanced" not in f
+        ]
         if candidates:
+            # 원본 템플릿일 가능성이 가장 높은 파일(보통 이름이 명확함)을 선택
             template_path = os.path.abspath(os.path.join(UPLOAD_DIR, candidates[0]))
     
     if not template_path:
-        print(f"[PYHWPX] 템플릿 파일을 찾을 수 없습니다: {document_id}")
+        _log(f"템플릿 파일을 찾을 수 없습니다: {document_id}")
         return False
 
-    print(f"[PYHWPX] Starting generation for {document_id}")
+    _log(f"Starting generation for {document_id} in {mode} mode")
     hwp = None
     pythoncom.CoInitialize()
     
     try:
         try:
             dispatch_hwp = win32com.client.DispatchEx('HWPFrame.HwpObject')
-            print("[PYHWPX] ✅ HwpObject Dispatch 성공.")
+            _log("HwpObject Dispatch 성공.")
         except Exception as dispatch_err:
-            print(f"[PYHWPX] ❌ Dispatch 실패: {dispatch_err}")
+            _log(f"Dispatch 실패: {dispatch_err}")
             return False
 
         hwp = Hwp(visible=False)
@@ -478,9 +490,10 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         except: pass
 
         if not hwp.open(template_path):
-            print(f"[PYHWPX] 템플릿 열기 실패: {template_path}")
+            _log(f"템플릿 열기 실패: {template_path}")
             return False
 
+        _log("서식 초기화 및 구조 분석 중...")
         reset_document_styles(hwp, style_config)
 
         targets = []
@@ -497,7 +510,15 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                     seen_addrs.add(addr) 
                     
                 is_content_target = node.get("content") is True
-                content = node.get("draft_content", "").strip()
+                
+                # 모드에 따라 독립적인 필드만 추출 (절대 섞이지 않도록 보장)
+                content = ""
+                if mode == "enhanced":
+                    content = node.get("extended_content") or ""
+                else:
+                    content = node.get("draft_content") or ""
+                
+                content = str(content).strip()
                 title = node.get("title", "").strip()
                 json_type = node.get("type", "heading")
                 
@@ -518,49 +539,54 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         collect_targets(tree_data)
         targets.sort(key=lambda x: x["index"], reverse=True)
 
-        for target in targets:
+        _log(f"데이터 주입 대상 선정 완료: 총 {len(targets)}개의 섹션/표")
+
+        # 3. 데이터 주입 루프
+        for i, target in enumerate(targets):
+            node_type = target.get("type")
+            idx = target.get("index")      
+            content = target.get("content", "")
+            title = target.get("title", "")
+            
+            progress_msg = f"[{i+1}/{len(targets)}] '{title}' 내용 주입 중..."
+            _log(progress_msg)
+            
             try:
-                node_type = target.get("type")
-                idx = target.get("index")      
-                content = target.get("content", "")
-                title = target.get("title", "")
-                
                 if not content: continue
                 
                 if node_type == "p":
                     clean_keyword = re.sub(r'^([Ⅰ-Ⅹ0-9가-하\-\.\(\)]+)\s*', '', title).strip()
                     clean_keyword = clean_keyword[:40] if clean_keyword else title[:40]
                     
+                    # 1순위: 마커 형태 검색 {{제목}} - 있으면 대체
+                    marker = f"{{{{{title}}}}}"
                     hwp.MovePos(2) 
                     hwp.HAction.GetDefault("RepeatFind", hwp.HParameterSet.HFindReplace.HSet)
-                    hwp.HParameterSet.HFindReplace.FindString = clean_keyword
+                    hwp.HParameterSet.HFindReplace.FindString = marker
                     hwp.HParameterSet.HFindReplace.IgnoreMessage = 1
                     hwp.HParameterSet.HFindReplace.Direction = 1 
                     
-                    found = False
                     if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
-                        found = True
-                    else:
-                        short_keyword = clean_keyword[:15]
-                        hwp.MovePos(2)
-                        hwp.HParameterSet.HFindReplace.FindString = short_keyword
-                        if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
-                            found = True
-                    
-                    if found:
-                        hwp.HAction.Run("Cancel")      
-                        hwp.HAction.Run("MoveParaEnd") 
-                        hwp.HAction.Run("BreakPara")   
+                        hwp.HAction.Run("Delete")
                         insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
-                        hwp.HAction.Run("BreakPara") 
                     else:
-                        print(f"[PYHWPX] 🚨 탐색 실패. 인덱스({idx}) 지점에 강제 삽입.")
-                        try:
-                            hwp.SetPos(0, idx, 0)
+                        # 2순위: 제목 검색
+                        hwp.MovePos(2)
+                        hwp.HParameterSet.HFindReplace.FindString = clean_keyword
+                        if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
+                            hwp.HAction.Run("Cancel")
                             hwp.HAction.Run("MoveParaEnd")
                             hwp.HAction.Run("BreakPara")
+                            # 새 줄을 만든 후 주입 (기존 내용과의 혼입 방지를 위해 Open 시점의 템플릿 신뢰)
                             insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
-                        except: pass
+                        else:
+                            # 3순위: 강제 주입
+                            try:
+                                hwp.SetPos(0, idx, 0)
+                                hwp.HAction.Run("MoveParaEnd")
+                                hwp.HAction.Run("BreakPara")
+                                insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
+                            except: pass
                     
                 elif node_type == "tbl":
                     print(f"[PYHWPX] 📊 표 주입 시도: {idx}번째 표 (제목: {title})")
@@ -581,8 +607,10 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                     for r_idx, row in enumerate(table_data):
                                         for c_idx, cell_value in enumerate(row):
                                             hwp.HAction.Run("Cancel") 
-                                            hwp.HAction.Run("MoveLineBegin")
+                                            # hwp.HAction.Run("MoveLineBegin")
                                             hwp.HAction.Run("TableCellBlock")
+                                            hwp.HAction.Run("Cancel")
+                                            hwp.HAction.Run("MoveSelDocEnd")  
                                             hwp.HAction.Run("Delete")
                                             hwp.HAction.Run("Cancel")
 
@@ -595,7 +623,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                                                 hwp.HAction.Run("TableRightCell")
                                                 pos_after = hwp.get_pos()
                                                 if pos_before == pos_after:
-                                                    print("[PYHWPX] ➕ 새 행을 추가합니다.")
+                                                    _log("➕ 새 행을 추가합니다.")
                                                     try:
                                                         hwp.TableAppendRow() 
                                                         for _ in range(len(row) - 1): hwp.HAction.Run("TableLeftCell")    
@@ -614,20 +642,20 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
             except Exception as target_ex:
                 print(f"[PYHWPX] ❌ Error processing target '{title}': {target_ex}")
 
-        print("[PYHWPX] 📄 쪽 번호를 삽입합니다 (BottomCenter).")
+        _log("📄 쪽 번호를 삽입합니다 (BottomCenter).")
         try:
             hwp.page_num_pos(position='BottomCenter', side_char=True)
         except Exception as e:
-            print(f"[PYHWPX] ⚠️ 쪽 번호 삽입 중 오류 (무시됨): {e}")
+            _log(f"⚠️ 쪽 번호 삽입 중 오류 (무시됨): {e}")
 
-        # ==========================================
-        # 🧹 [최종 병합] 완성된 클린업 로직 실행!
-        # ==========================================
-        run_all_cleanups(hwp)
+        # 클린업 로직 실행
+        _log("🧹 최종 서식 및 가이드라인 클린업을 시작합니다...")
+        run_all_cleanups(hwp, on_progress)
 
         abs_output_path = os.path.abspath(output_path)
         hwp.save_as(abs_output_path)
-        print(f"[PYHWPX] 🚀 Generation successful: {abs_output_path}")
+        _log(f"🚀 Generation successful: {os.path.basename(abs_output_path)}")
+        _log("🎉 HWPX 생성이 완료되었습니다.")
         return True
 
     except Exception as e:
@@ -638,7 +666,7 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         
     finally:
         if hwp:
-            try: hwp.SetMessageBoxMode(0x00000000) # 종료 전에는 안전하게 0(기본값)으로 원상 복구합니다.
+            try: hwp.SetMessageBoxMode(0x00000000) 
             except: pass
 
         print("[PYHWPX] 🧹 HWP 프로세스 및 메모 정리를 시작합니다.")
@@ -661,7 +689,6 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
             if 'hwp' in locals(): del hwp
             if 'dispatch_hwp' in locals(): del dispatch_hwp
             if 'native_hwp' in locals(): del native_hwp
-            if 'pset' in locals(): del pset
         except Exception as del_err: pass
 
         import gc

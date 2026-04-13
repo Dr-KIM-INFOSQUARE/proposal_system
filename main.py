@@ -16,23 +16,17 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 1. CORS 구성을 앱 최상단에 배치 (지연 방지)
-# 프론트엔드 도메인과 127.0.0.1 모두 명시적으로 허용
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
+# CORS 구성: 모든 호스트 및 아이피에서의 접속 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 개발 중에는 전체 허용
-    allow_credentials=True, # 쿠키 사용 가능성 대비
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"]
 )
+
+stone_origins = [] # 더 이상 사용하지 않음
 
 # 2. 정적 파일 (PDF 미리보기용)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

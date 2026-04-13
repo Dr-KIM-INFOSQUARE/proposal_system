@@ -141,20 +141,32 @@ interface AnalysisWorkflowProps {
   hasSelectedFile: boolean;
   uploadMessage?: string | null;
   onEnhanceStateChange?: (active: boolean, msg?: string) => void;
+  onSetTreeData?: (tree: DocumentNode[]) => void;
 }
 
 export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [activeStep, setActiveStep] = useState<number>(1);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const treeRef = useRef<DocumentTreeRef>(null);
+  const cancelDraftRef = useRef<boolean>(false);
   
   const [isHwpxModalOpen, setIsHwpxModalOpen] = useState<boolean>(false);
+  const [hwpxMode, setHwpxMode] = useState<'draft' | 'enhanced'>('draft');
 
-  const handleOpenHwpxModal = async () => {
+  const handleOpenHwpxModal = async (mode: 'draft' | 'enhanced' = 'draft') => {
     if (!props.documentId) return;
     try {
       const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-      await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
+      const treeData = treeRef.current?.getTreeData() || [];
+      
+      // 선택된 것이 하나도 없는데 트리는 있다면 저장을 건너뜁니다 (데이터 보호)
+      if (selectedIds.length === 0 && treeData.length > 0) {
+        console.warn("[Workflow] Skipping auto-save in HwpxModal: No nodes selected.");
+      } else {
+        await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
+      }
+      
+      setHwpxMode(mode);
       setIsHwpxModalOpen(true);
     } catch(err) {
       alert("문서 저장 중 오류가 발생했습니다: " + err);
@@ -163,16 +175,41 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
   const handleGenerateHwpx = async (styleConfig: any) => {
     if (!props.documentId) return;
+    setIsGeneratingHwpx(true);
+    setHwpxLogs(['HWPX 파일 생성 준비 중...']);
+    
     try {
-      const data = await api.generateHwpx(props.documentId, styleConfig);
-      if (data.status === 'success' && data.download_url) {
+      const data = await api.generateHwpxStream(
+        props.documentId, 
+        styleConfig, 
+        hwpxMode,
+        (msg) => {
+          setHwpxLogs(prev => {
+            // 마지막 로그와 동일하면 중복 추가 방지
+            if (prev.length > 0 && prev[prev.length - 1] === msg) return prev;
+            return [...prev.slice(-99), msg]; // 최근 100개 유지
+          });
+        }
+      );
+      
+      if (data && data.download_url) {
+          setHwpxLogs(prev => [...prev, '✅ 생성 완료! 다운로드를 시작합니다.']);
           window.location.href = data.download_url;
+          // 다운로드 완료 후 모달 닫기 1초
+          setTimeout(() => {
+            setIsHwpxModalOpen(false);
+          }, 1000);
       } else {
-          alert("HWPX 생성 실패: " + (data.detail || "알 수 없는 오류"));
+          setHwpxLogs(prev => [...prev, '❌ 생성에 실패했습니다.']);
       }
     } catch (error) {
-      alert("HWPX 생성 중 오류: " + error);
-      throw error;
+      console.error("HWPX stream error:", error);
+      setHwpxLogs(prev => [...prev, '🚨 오류 발생: ' + error]);
+    } finally {
+      setTimeout(() => {
+        setIsGeneratingHwpx(false);
+        // 로그 초기화는 하지 않음 (사용자가 마지막으로 볼 수 있게)
+      }, 5000);
     }
   };
 
@@ -200,6 +237,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
   const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
 
+  // Step 4 UI States
+  const [isEnhancingProposal, setIsEnhancingProposal] = useState(false);
+  const [enhancementStatus, setEnhancementStatus] = useState<string>('');
+  const [isGeneratingHwpx, setIsGeneratingHwpx] = useState(false);
+  const [hwpxLogs, setHwpxLogs] = useState<string[]>([]);
+  const [runDeepResearch, setRunDeepResearch] = useState(false);
+  const [viewMode, setViewMode] = useState<'draft' | 'enhanced'>('enhanced');
+
   // Step 2 UI States for tabs
   const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
   const [activeMasterBriefTab, setActiveMasterBriefTab] = useState<'edit' | 'preview'>('preview');
@@ -207,17 +252,33 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   // [신규] 초안 생성 중단 핸들러
   const handleCancelDraft = async () => {
     if (!props.documentId) return;
-    if (!window.confirm("정말 초안 작성을 중단하시겠습니까?")) return;
+    if (!window.confirm("정말 초안 작성을 중단하시겠습니까? 작업을 중단하면 지금까지 작성된 초안 내용은 모두 초기화됩니다.")) return;
     
+    cancelDraftRef.current = true;
     try {
         const res = await api.cancelDraft(props.documentId);
         if (res.status === 'success') {
-            console.log("[Workflow] Draft generation cancelled by user.");
-            setDraftLogs(prev => [...prev, "> 사용자가 작업을 중단했습니다."]);
-            // SSE 스트림은 자동으로 중단 메시지를 수신하고 종료될 것임
+            console.log("[Workflow] Draft generation cancelled by user. Resetting data...");
+            
+            // [추가] 취소 시 데이터 초기화 로직 실행
+            const resetRes = await api.saveProjectDraftReset(props.documentId);
+            const freshTree = resetRes.tree || [];
+            
+            setDraftTree(freshTree);
+            if (props.onSetTreeData) props.onSetTreeData(freshTree);
+            
+            setDraftLogs(prev => [...prev, "> 사용자가 작업을 중단하고 데이터를 초기화했습니다."]);
+            setIsGeneratingDraft(false);
+            
+            if (props.onEnhanceStateChange) {
+                props.onEnhanceStateChange(false);
+            }
         }
     } catch (e) {
         console.error("[Workflow] Failed to cancel draft:", e);
+    } finally {
+        // 잠시 후 플래그 해제 (현재 루프가 정리될 시간 확보)
+        setTimeout(() => { cancelDraftRef.current = false; }, 1000);
     }
   };
 
@@ -239,35 +300,16 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     console.log("[Workflow] Starting draft generation. Mode:", modeToUse);
     setIsGeneratingDraft(true);
     
-    // 자동 저장: 사용자가 선택한 노드 및 콘텐츠 구조를 DB에 확실히 저장
-    if (treeRef.current) {
-        try {
-            const { selectedIds, contentIds } = treeRef.current.getSelectedIds();
-            const treeData = treeRef.current.getTreeData();
-            await api.saveProject(
-                docId, 
-                props.fileName?.split('.')[0] || 'Draft', 
-                props.fileName || 'document.hwpx', 
-                selectedIds, 
-                contentIds,
-                treeData
-            );
-            console.log("[Workflow] Auto-saved tree selection before draft generation.");
-            props.onSave(selectedIds, contentIds);
-        } catch (e) {
-            console.error("[Workflow] Failed to auto-save tree selection:", e);
-        }
-    } else {
-        console.warn("[Workflow] treeRef is null (Accordion 1 closed). Skipping auto-save, using DB data.");
-    }
+    // [수정] 초안 생성 전 자동 저장 제거 (사용자가 1단계에서 직접 '저장' 버튼을 누른 데이터만 사용함)
+    console.log("[Workflow] Starting draft generation with existing tree selection.");
     
     while (!success) {
       try {
-        // [수정] DB에서 로드된 props.initialTreeData를 사용하여 목차를 즉시 생성
-        const currentTree = props.initialTreeData;
+        // [수정] 최신 트리를 props에서 가져오되, 만약 금방 리셋했다면 props가 아직 반영 안되었을 수 있으므로
+        // 로컬 draftTree가 있다면 그것을 우선시 (초안 리셋 시 []가 됨)
+        const currentTree = draftTree.length > 0 ? draftTree : props.initialTreeData;
         if (currentTree && currentTree.length > 0) {
             setDraftTree(currentTree);
-            // [삭제] if (firstNode) setSelectedNodeId(firstNode.id); -> 시작 시 자동 이동 제거
         }
 
         if (props.onEnhanceStateChange) {
@@ -311,6 +353,13 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
             props.onEnhanceStateChange(false);
         }
         
+        // [추가] 사용자가 직접 취소한 경우 재시도 모달을 띄우지 않고 즉시 종료
+        if (cancelDraftRef.current) {
+            console.log("[Workflow] Manual cancellation detected in loop. Stopping.");
+            setIsGeneratingDraft(false);
+            break;
+        }
+
         const retryDecision = await new Promise<boolean>((resolve) => {
           setRetryModalConfig({ isOpen: true, modelName, resolve });
         });
@@ -369,6 +418,80 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     });
   };
 
+  // --- Step 4 Enhancing Handlers ---
+  const handleCancelEnhance = async () => {
+    if (!props.documentId) return;
+    try {
+        await api.cancelEnhance(props.documentId);
+        setIsEnhancingProposal(false);
+        setEnhancementStatus('사용자에 의해 중단되었습니다.');
+    } catch (err) {
+        console.error("Cancel failed:", err);
+    }
+  };
+
+  const handleGenerateEnhance = async () => {
+    if (!props.documentId) return;
+    
+    if (runDeepResearch && !window.confirm("심층 리서치(Deep Research)를 포함하면 약 5~10분이 소요될 수 있습니다. 계속하시겠습니까?")) {
+        return;
+    }
+
+    setIsEnhancingProposal(true);
+    setEnhancementStatus('고도화 작업 준비 중...');
+    setViewMode('enhanced');
+
+    try {
+        await api.enhanceDraftStream(
+            props.documentId,
+            runDeepResearch,
+            (msg) => setEnhancementStatus(msg),
+            (nodeId, content) => {
+                setDraftTree(prev => findAndUpdateEnhancedNode(prev, nodeId, content));
+            }
+        );
+        setEnhancementStatus('고도화가 완료되었습니다.');
+        handleStepCompletion(4);
+    } catch (err) {
+        console.error("Enhancement failed:", err);
+        setEnhancementStatus(`오류 발생: ${err}`);
+    } finally {
+        setIsEnhancingProposal(false);
+    }
+  };
+
+  // 고도화 노드 업데이트 헬퍼
+  const findAndUpdateEnhancedNode = (nodes: DocumentNode[], id: string | number, content: string): DocumentNode[] => {
+    return nodes.map(node => {
+        if (node.id === id) {
+            return { ...node, extended_content: content };
+        }
+        if (node.children) {
+            return { ...node, children: findAndUpdateEnhancedNode(node.children, id, content) };
+        }
+        return node;
+    });
+  };
+
+  // 고도화 상태 복구를 위한 useEffect (Step 4 진입 시)
+  useEffect(() => {
+    if (activeStep === 4 && !isEnhancingProposal && props.documentId) {
+        const checkEnhanceStatus = async () => {
+            try {
+                const status = await api.getEnhanceStatus(props.documentId!);
+                if (status.is_running) {
+                    console.log("[Workflow] Found ongoing enhancement task. Re-connecting...");
+                    setEnhancementStatus(status.last_message || "> 진행 중인 작업을 발견했습니다. 연결 중...");
+                    handleGenerateEnhance(); 
+                }
+            } catch (e) {
+                console.error("[Workflow] Enhancement status check failed:", e);
+            }
+        };
+        checkEnhanceStatus();
+    }
+  }, [activeStep, props.documentId]);
+
   const selectedNode = selectedNodeId ? (function find(nodes: DocumentNode[]): DocumentNode | undefined {
     for (const n of nodes) {
       if (n.id === selectedNodeId) return n;
@@ -380,10 +503,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     return undefined;
   })(draftTree) : undefined;
 
-  // Step 4 UI States
-  const [isEnhancingProposal, setIsEnhancingProposal] = useState(false);
-  const [finalProposal, setFinalProposal] = useState('');
-  
   // [추가] 최초 프로젝트 로드 시 마지막 단계 자동 열기 트리거
   const [autoOpenTriggered, setAutoOpenTriggered] = useState(false);
 
@@ -406,17 +525,24 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   
   // 기존 초안 데이터 복원 및 3단계 완료 처리
   useEffect(() => {
-    if (props.initialTreeData.length > 0) {
-      const hasDraft = (nodes: DocumentNode[]): boolean => {
+      const hasDraftContent = (nodes: DocumentNode[]): boolean => {
         for (const node of nodes) {
           if (node.draft_content) return true;
-          if (node.children && hasDraft(node.children)) return true;
+          if (node.children && hasDraftContent(node.children)) return true;
         }
         return false;
       };
 
-      if (hasDraft(props.initialTreeData)) {
-        console.log("[Workflow] Existing draft content found. Restoring draftTree and marking step 3 complete.");
+      const hasEnhancedContent = (nodes: DocumentNode[]): boolean => {
+        for (const node of nodes) {
+          if (node.extended_content) return true;
+          if (node.children && hasEnhancedContent(node.children)) return true;
+        }
+        return false;
+      };
+
+      if (hasDraftContent(props.initialTreeData)) {
+        console.log("[Workflow] Existing draft/enhanced content found. Restoring draftTree.");
         setDraftTree(props.initialTreeData);
         
         setCompletedSteps(prev => {
@@ -424,6 +550,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           [1, 2, 3].forEach(s => {
             if (!newSteps.includes(s)) newSteps.push(s);
           });
+          // 고도화 내용(extended_content)이 있으면 4단계도 완료 처리
+          if (hasEnhancedContent(props.initialTreeData) && !newSteps.includes(4)) {
+            newSteps.push(4);
+          }
           return newSteps;
         });
 
@@ -432,7 +562,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           setSelectedNodeId(firstDraftNode.id);
         }
       }
-    }
   }, [props.initialTreeData]);
 
   // 마스터 브리프 초기화
@@ -467,13 +596,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     }
   }, [props.initialMasterBrief]);
 
-  // [추가] 초기 로딩 완료 후 가장 마지막 완료 단계 열기
+  // [수정] 최초 로딩 시 마지막 단계 자동 열기 제거 (사용자가 직접 선택하도록 변경)
   useEffect(() => {
     if (props.documentId && !autoOpenTriggered && completedSteps.length > 0) {
-      const lastStep = Math.max(...completedSteps);
-      const nextStep = Math.min(lastStep + 1, 4);
-      console.log(`[Workflow] Auto-opening next step: ${nextStep} (last was ${lastStep})`);
-      setActiveStep(nextStep);
+      // setActiveStep(nextStep) 로직 제거
       setAutoOpenTriggered(true);
     }
   }, [props.documentId, completedSteps, autoOpenTriggered]);
@@ -509,6 +635,14 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
      }
   }, [masterBriefData, masterBrief]);
 
+  // HWPX 로그 자동 스크롤
+  useEffect(() => {
+    if (isGeneratingHwpx) {
+      const el = document.getElementById('hwpx-log-end');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [hwpxLogs, isGeneratingHwpx]);
+
   const toggleStep = (step: number) => {
     setActiveStep(activeStep === step ? 0 : step);
   };
@@ -521,7 +655,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const handleStepCompletion = (step: number) => {
     if (!completedSteps.includes(step)) {
       setCompletedSteps([...completedSteps, step]);
-      if (step < 3) setActiveStep(step + 1);
+      // [삭제] setActiveStep(step + 1); -> 자동 다음 단계 이동 기능을 제거함 (UX 피드백 반영)
     }
   };
 
@@ -654,7 +788,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 {...props} 
                 ref={treeRef}
                 hideHeader={true} 
-                hideFooter={true} 
+                hideFooter={false} 
                 onStepComplete={() => handleStepCompletion(1)}
             />
           </div>
@@ -971,7 +1105,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                     try {
                                         await api.saveMasterBrief(props.documentId, finalMasterBriefToSave, initialIdeaJsonToSave);
                                         handleStepCompletion(2);
-                                        setTimeout(() => toggleStep(3), 300);
+                                        alert("아이디어 마스터 브리프가 성공적으로 저장되었습니다!");
                                     } catch(err) {
                                         alert("저장 실패: " + err);
                                     }
@@ -1055,9 +1189,21 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                   )}
               </div>
 
-             <div className="flex-1 w-full">
-                {draftTree.length === 0 && !isGeneratingDraft ? (
-                   <div className="flex flex-col items-center justify-center p-12 gap-8 min-h-[400px]">
+             {/* 초안 내용이 하나도 없는지 확인하는 헬퍼 함수 */}
+             { (function() {
+                const hasAnyDraft = (nodes: DocumentNode[]): boolean => {
+                    for (const n of nodes) {
+                        if (n.draft_content && n.draft_content.trim().length > 0) return true;
+                        if (n.children && hasAnyDraft(n.children)) return true;
+                    }
+                    return false;
+                };
+                const isDraftEmpty = !hasAnyDraft(draftTree);
+
+                return (
+                  <div className="flex-1 w-full">
+                    {isDraftEmpty && !isGeneratingDraft ? (
+                       <div className="flex flex-col items-center justify-center p-12 gap-8 min-h-[400px]">
                       <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center relative">
                          <span className="material-symbols-outlined text-4xl text-primary opacity-60">database</span>
                          <div className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"></div>
@@ -1219,24 +1365,33 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                    </div>
                 )}
              </div>
+             )
+             })() }
 
              {!isGeneratingDraft && (
-                <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between">
+                <div className="p-4 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between relative z-30">
                    <div className="flex items-center gap-4">
                        <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
                           <span className="material-symbols-outlined text-sm">info</span>
                           새로운 초안을 작성하려면 상태를 초기화하세요.
                        </div>
                        <button 
-                           onClick={async () => {
+                           type="button"
+                           onClick={async (e) => {
+                               e.stopPropagation(); // 이벤트 전파 방지
                                if (!props.documentId) return;
-                               if (window.confirm("진행 중인 '초안 작성' 단계의 모든 상태(노트북 ID, 리서치 기록 등)를 완전히 초기화하시겠습니까?\n서버에 저장된 이전 기록이 삭제되어 처음부터 모든 과정을 새로 시작하게 됩니다.")) {
+                               if (window.confirm("진행 중인 '초안 작성' 및 '고도화' 단계의 모든 데이터(노트북 ID, 리서치 기록 등)를 완전히 초기화하시겠습니까?\n이 작업은 되돌릴 수 없습니다.")) {
                                    try {
-                                       await api.saveProjectDraftReset(props.documentId);
-                                       setDraftTree([]);
-                                       setCompletedSteps(prev => (prev || []).filter(s => s !== 3));
-                                       alert("서버 상태가 초기화되었습니다.");
+                                       const res = await api.saveProjectDraftReset(props.documentId);
+                                       const freshTree = res.tree || [];
+                                       setDraftTree(freshTree);
+                                       if (props.onSetTreeData) props.onSetTreeData(freshTree);
+                                       
+                                       // Step 3와 Step 4 모두 완료 목록에서 제거
+                                       setCompletedSteps(prev => (prev || []).filter(s => s !== 3 && s !== 4));
+                                       alert("모든 진행 상태가 초기화되었습니다.");
                                    } catch(err) {
+                                       console.error("Reset failed:", err);
                                        alert("초기화 실패");
                                    }
                                }
@@ -1257,7 +1412,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                        const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
                                        await api.saveProject(props.documentId, props.fileName || 'Untitled', props.fileName || 'Unknown File', selectedIds, contentIds, draftTree);
                                        handleStepCompletion(3);
-                                       setTimeout(() => toggleStep(4), 300);
+                                       alert("초안 내용이 성공적으로 저장되었습니다!");
                                    } catch(err) {
                                        alert("저장 실패: " + err);
                                    }
@@ -1269,7 +1424,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                            </button>
 
                            <button 
-                                onClick={handleOpenHwpxModal}
+                                onClick={() => handleOpenHwpxModal('draft')}
                                 className="px-6 py-2.5 ml-4 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-sm font-black rounded-xl border border-transparent shadow-[0_4px_12px_rgba(167,139,250,0.4)] hover:shadow-[0_6px_16px_rgba(167,139,250,0.6)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md transition-all flex items-center gap-2 cursor-pointer"
                             >
                                 <span className="material-symbols-outlined text-lg">description</span>
@@ -1291,63 +1446,235 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
            onToggle={() => toggleStep(4)}
            isDisabled={isStepDisabled(4)}
         >
-          <div className="p-6 md:p-8 flex flex-col gap-6 bg-surface-container-lowest/50">
-             <div className="flex flex-col gap-2">
-                 <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
-                     <span className="material-symbols-outlined text-tertiary">edit_document</span>
-                     설득력 강화 및 최종 HWPX 포맷팅
-                 </h4>
-                 <p className="text-sm text-outline leading-relaxed break-keep">
-                     NotebookLM이 정리한 초안과 근거 데이터를 Gemini를 활용하여 정부지원사업 심사위원들을 설득할 수 있는 고품질의 비즈니스 문장으로 윤문하고 최종 HWPX 파일을 변환 및 생성합니다.
-                 </p>
+          <div className="p-0 flex flex-col bg-surface-container-lowest/50">
+             {/* 상태 알림 바 */}
+             {(isEnhancingProposal || enhancementStatus) && (
+                <div className="px-6 py-3 bg-tertiary/10 border-b border-tertiary/20 flex items-center justify-between animate-fade-in">
+                   <div className="flex items-center gap-3">
+                      {isEnhancingProposal ? (
+                         <div className="w-4 h-4 rounded-full border-2 border-tertiary/20 border-t-tertiary animate-spin"></div>
+                      ) : (
+                         <span className="material-symbols-outlined text-tertiary text-lg">info</span>
+                      )}
+                      <span className="text-xs font-black text-tertiary">{enhancementStatus || (isEnhancingProposal ? '고도화 진행 중...' : '준비 완료')}</span>
+                   </div>
+                   {isEnhancingProposal && (
+                      <button 
+                         onClick={handleCancelEnhance}
+                         className="px-3 py-1 bg-white border border-tertiary/30 text-tertiary text-[10px] font-black rounded-lg hover:bg-tertiary hover:text-white transition-all shadow-sm flex items-center gap-1"
+                      >
+                         <span className="material-symbols-outlined text-[14px]">stop_circle</span>
+                         중단하기
+                      </button>
+                   )}
+                </div>
+             )}
+
+             <div className="min-h-[600px] flex flex-col">
+                {(!isEnhancingProposal && !draftTree.some(n => n.extended_content || (n.children && n.children.some((c: any) => c.extended_content)))) ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12 gap-8">
+                       <div className="text-center max-w-lg">
+                          <h4 className="text-xl font-black text-on-surface mb-3 flex items-center justify-center gap-2">
+                             <span className="material-symbols-outlined text-tertiary text-2xl">auto_awesome</span>
+                             전문가 수준의 고도화 시작
+                          </h4>
+                          <p className="text-sm text-outline leading-relaxed break-keep">
+                             확정된 초안을 바탕으로 NotebookLM의 지식을 재동기화하여 설득력을 극대화합니다.<br/>
+                             정부지원사업 심사위원들이 선호하는 전문 용어 사용 및 풍성한 근거를 보강합니다.
+                          </p>
+                       </div>
+
+                       <div className="w-full max-w-md p-6 bg-white rounded-3xl border border-tertiary/10 shadow-xl flex flex-col gap-5">
+                          <div className="flex items-center justify-between p-4 bg-tertiary/5 rounded-2xl border border-tertiary/10">
+                             <div className="flex items-center gap-3">
+                                <span className="material-symbols-outlined text-tertiary p-2 bg-white rounded-xl shadow-sm">search_insights</span>
+                                <div>
+                                   <p className="text-xs font-black text-tertiary">심층 리서치 추가 수행</p>
+                                   <p className="text-[10px] text-outline">최신 트렌드 및 정책 데이터를 추가로 리서치합니다 (+5~10분)</p>
+                                </div>
+                             </div>
+                             <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={runDeepResearch} onChange={(e) => setRunDeepResearch(e.target.checked)} />
+                                <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-tertiary shadow-inner"></div>
+                             </label>
+                          </div>
+
+                          <button 
+                              onClick={handleGenerateEnhance}
+                              className="w-full py-4 bg-tertiary text-on-tertiary text-sm font-black rounded-2xl shadow-lg hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center justify-center gap-2 group"
+                          >
+                             <span className="material-symbols-outlined text-xl group-hover:rotate-12 transition-transform">rocket_launch</span>
+                             고도화 엔진 가동 시작
+                          </button>
+                       </div>
+                    </div>
+                ) : (
+                    <div className="flex flex-col md:flex-row items-start gap-6 p-6 relative">
+                       {/* 트리 네비게이션 */}
+                       <div className="flex-1 min-w-0 bg-surface rounded-2xl border border-outline-variant/10 shadow-sm overflow-hidden">
+                          <div className="p-4 border-b border-outline-variant/5 bg-tertiary/5">
+                             <span className="text-xs font-black text-tertiary uppercase tracking-wider flex items-center gap-2">
+                                <span className="material-symbols-outlined text-[18px]">account_tree</span>
+                                고도화 목차
+                             </span>
+                          </div>
+                          <nav className="p-3 flex flex-col gap-1.5 bg-white">
+                             { (function renderEnhanceToC(nodes: DocumentNode[], depth = 0) {
+                                 return nodes.map(node => (
+                                    <React.Fragment key={node.id}>
+                                       <button
+                                          onClick={() => setSelectedNodeId(node.id)}
+                                          className={`w-full text-left p-3 rounded-xl text-xs transition-all flex items-center gap-2 group
+                                             ${selectedNodeId === node.id ? 'bg-tertiary text-white font-bold shadow-md ring-4 ring-tertiary/10' : 'hover:bg-tertiary/5 text-on-surface/70'}
+                                             ${node.extended_content ? 'opacity-100' : 'opacity-40'}
+                                          `}
+                                          style={{ paddingLeft: `${depth * 16 + 12}px` }}
+                                       >
+                                          <span className={`material-symbols-outlined text-[18px] ${selectedNodeId === node.id ? 'text-white' : 'text-tertiary/40'}`}>
+                                             {node.children && node.children.length > 0 ? 'folder' : 'description'}
+                                          </span>
+                                          <span className="truncate">{node.title}</span>
+                                          {node.extended_content && (
+                                             <span className={`ml-auto flex items-center justify-center w-5 h-5 rounded-full ${selectedNodeId === node.id ? 'bg-white/20 text-white' : 'bg-tertiary-container text-tertiary'} shadow-sm`}>
+                                                <span className="material-symbols-outlined text-[14px] font-black">check</span>
+                                             </span>
+                                          )}
+                                       </button>
+                                       {node.children && renderEnhanceToC(node.children, depth + 1)}
+                                    </React.Fragment>
+                                 ));
+                              })(draftTree)}
+                          </nav>
+                       </div>
+
+                       {/* 본문 에디터/뷰어 */}
+                       <div className="w-full md:w-[600px] lg:w-[950px] sticky top-24 shrink-0 flex flex-col bg-white rounded-2xl border border-tertiary/20 shadow-2xl overflow-hidden z-20 animate-slide-up">
+                          {selectedNode ? (
+                             <>
+                                <div className="px-5 py-4 border-b border-outline-variant/10 flex items-center justify-between bg-tertiary/5">
+                                   <div className="flex items-center gap-2 min-w-0">
+                                      <span className="material-symbols-outlined text-tertiary text-[20px]">auto_fix_high</span>
+                                      <span className="text-sm font-black text-on-surface truncate">{selectedNode.title}</span>
+                                   </div>
+                                   <div className="flex bg-surface-container-high p-1 rounded-xl border border-outline-variant/10 shrink-0">
+                                      <button 
+                                         onClick={() => setViewMode('draft')}
+                                         className={`px-4 py-1.5 text-xs font-black rounded-lg transition-all ${viewMode === 'draft' ? 'bg-white text-primary shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                      >초안</button>
+                                      <button 
+                                         onClick={() => setViewMode('enhanced')}
+                                         className={`px-4 py-1.5 text-xs font-black rounded-lg transition-all ${viewMode === 'enhanced' ? 'bg-tertiary text-white shadow-sm' : 'text-outline hover:text-on-surface'}`}
+                                      >고도화본</button>
+                                   </div>
+                                </div>
+                                
+                                <div className="h-[700px] overflow-y-auto p-8 custom-scrollbar bg-surface-container-lowest relative">
+                                   {isEnhancingProposal && (!selectedNode.extended_content || selectedNode.extended_content.trim() === '') && viewMode === 'enhanced' && (
+                                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/20 backdrop-blur-[4px] animate-in fade-in duration-700">
+                                           <div className="bg-white/90 p-8 rounded-3xl shadow-xl border border-tertiary/10 flex flex-col items-center gap-4 max-w-xs text-center transform scale-110">
+                                               <div className="relative">
+                                                  <div className="w-16 h-16 rounded-full border-4 border-tertiary/10 border-t-tertiary animate-spin"></div>
+                                                  <div className="absolute inset-0 flex items-center justify-center">
+                                                     <span className="material-symbols-outlined text-2xl text-tertiary animate-pulse">auto_awesome</span>
+                                                  </div>
+                                               </div>
+                                               <div>
+                                                  <p className="text-sm font-black text-on-surface">고도화 중입니다</p>
+                                                  <p className="text-[11px] text-outline mt-1 leading-relaxed">최고의 설득력을 갖춘 전문 문장으로 윤문하고 있습니다.</p>
+                                               </div>
+                                           </div>
+                                       </div>
+                                   )}
+                                   <div className="markdown-preview max-w-none text-on-surface">
+                                      {viewMode === 'draft' ? (
+                                         <>
+                                            <div className="mb-8 p-5 bg-primary/5 rounded-2xl border border-primary/10 flex items-start gap-3">
+                                                <span className="material-symbols-outlined text-primary text-[22px] mt-0.5">history</span>
+                                                <p className="text-sm text-primary/80 leading-relaxed font-medium">
+                                                    기존에 작성된 초안 내용입니다. 고도화본과 비교하여 검토해 보세요.
+                                                </p>
+                                            </div>
+                                            <MarkdownContent content={selectedNode.draft_content || '내용이 없습니다.'} />
+                                         </>
+                                      ) : (
+                                         <>
+                                            {!selectedNode.extended_content && !isEnhancingProposal && (
+                                                <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+                                                   <span className="material-symbols-outlined text-6xl mb-4">bolt</span>
+                                                   <p className="text-sm font-bold">아직 고도화되지 않은 항목입니다.</p>
+                                                </div>
+                                            )}
+                                            <MarkdownContent content={selectedNode.extended_content || ''} />
+                                         </>
+                                      )}
+                                   </div>
+                                </div>
+                             </>
+                          ) : (
+                             <div className="h-[800px] flex flex-col items-center justify-center p-12 text-center bg-surface-container-low/20">
+                                <div className="w-20 h-20 bg-tertiary/5 rounded-full flex items-center justify-center mb-6">
+                                   <span className="material-symbols-outlined text-4xl text-tertiary/30">auto_fix_high</span>
+                                </div>
+                                <h5 className="font-bold text-on-surface mb-2">항목을 선택해 주세요</h5>
+                                <p className="text-xs text-outline leading-relaxed max-w-[200px]">
+                                   좌측 목차에서 고도화된 내용을 확인할 섹션을 클릭하세요.
+                                 </p>
+                             </div>
+                          )}
+                       </div>
+                    </div>
+                )}
              </div>
 
-             {!finalProposal ? (
-                 <div className="flex flex-col items-center justify-center py-10 gap-4 border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-lowest shadow-inner">
-                     <div className="w-16 h-16 bg-tertiary/5 rounded-full flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-tertiary opacity-60">rocket_launch</span>
-                     </div>
-                     <button 
-                         onClick={() => {
-                             setIsEnhancingProposal(true);
-                             setTimeout(() => {
-                                 setIsEnhancingProposal(false);
-                                 setFinalProposal("1. 사업 개요 및 요약\n본 과제는 '글로벌 초격차 기술을 선도하는...' \n\n(💡 제안서 양식에 맞추어 전문적인 어조로 윤문된 최종 텍스트 결과가 표시됩니다.)");
-                                 handleStepCompletion(4);
-                             }, 2500);
-                         }}
-                         disabled={isEnhancingProposal}
-                         className="px-8 py-3.5 bg-tertiary text-on-tertiary text-sm font-black rounded-xl shadow-[0_8px_16px_-4px_rgba(155,107,245,0.3)] hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center gap-2 disabled:opacity-50 disabled:hover:translate-y-0"
-                     >
-                         {isEnhancingProposal ? (
-                             <><span className="material-symbols-outlined text-xl animate-spin">refresh</span> 고도화 및 문서 생성 중...</>
-                         ) : (
-                             <><span className="material-symbols-outlined text-xl">rocket_launch</span> 🚀 최종 사업계획서 고도화 시작</>
-                         )}
-                     </button>
-                 </div>
-             ) : (
-                 <div className="flex flex-col gap-6 animate-fade-in">
-                     <div className="bg-surface border border-tertiary/20 rounded-xl p-5 shadow-sm ring-1 ring-tertiary/5">
-                         <div className="text-sm font-black text-tertiary flex items-center gap-2 mb-4">
-                             <span className="material-symbols-outlined text-[16px]">task_alt</span> 최종 고도화 텍스트
-                         </div>
-                         <textarea 
-                             readOnly 
-                             value={finalProposal} 
-                             className="w-full min-h-[200px] bg-surface-container-lowest rounded-lg border border-outline-variant/10 p-4 text-sm resize-none outline-none font-mono text-on-surface leading-[1.8] custom-scrollbar"
-                         />
-                     </div>
-                     
-                     <div className="flex justify-end pt-2 border-t border-outline-variant/10">
-                         <button 
-                             onClick={handleOpenHwpxModal}
-                             className="px-6 py-3.5 bg-primary text-white font-black text-sm rounded-xl shadow-md hover:shadow-lg hover:bg-primary/95 flex items-center gap-2 transition-all hover:-translate-y-0.5 active:translate-y-0 text-center w-full md:w-auto justify-center"
-                         >
-                             <span className="material-symbols-outlined text-xl">download</span>
-                             최종 파일(HWPX) 다운로드
-                         </button>
-                     </div>
+             {completedSteps.includes(4) && !isEnhancingProposal && (
+                 <div className="p-6 bg-surface-container-high border-t border-outline-variant/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 text-[10px] text-outline font-bold">
+                           <span className="material-symbols-outlined text-sm">info</span>
+                           고도화된 내용만 초기화하고 다시 시작할 수 있습니다.
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!props.documentId) return;
+                                if (window.confirm("현재 고도화된 내용(extended_content)만 완전히 초기화하시겠습니까?\n기존 초안(draft_content)은 유지됩니다.")) {
+                                    try {
+                                        await api.resetEnhance(props.documentId);
+                                        // 트리 로컬 상태 업데이트
+                                        setDraftTree(prev => {
+                                            const resetNodes = (nodes: DocumentNode[]): DocumentNode[] => {
+                                                return nodes.map(n => ({
+                                                    ...n,
+                                                    extended_content: undefined,
+                                                    children: n.children ? resetNodes(n.children) : undefined
+                                                }));
+                                            };
+                                            return resetNodes(prev);
+                                        });
+                                        // Step 4 완료 목록에서 제거
+                                        setCompletedSteps(prev => (prev || []).filter(s => s !== 4));
+                                        alert("고도화 데이터가 초기화되었습니다.");
+                                    } catch(err) {
+                                        console.error("Reset failed:", err);
+                                        alert("초기화 실패");
+                                    }
+                                }
+                            }}
+                            className="px-4 py-2 bg-error/10 text-error hover:bg-error hover:text-white text-[12px] font-black rounded-lg transition-all border border-error/20 shadow-sm hover:shadow-md cursor-pointer flex items-center gap-2 group"
+                        >
+                            <span className="material-symbols-outlined text-[16px] group-hover:rotate-180 transition-transform">restart_alt</span>
+                            고도화 리셋
+                        </button>
+                    </div>
+
+                    <button 
+                       onClick={() => handleOpenHwpxModal('enhanced')}
+                       className="px-8 py-3.5 bg-gradient-to-r from-tertiary to-[#6366f1] text-white text-sm font-black rounded-xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center gap-2"
+                    >
+                       <span className="material-symbols-outlined text-xl">download</span>
+                       고도화 버전 HWPX 다운로드
+                    </button>
                  </div>
              )}
           </div>
@@ -1362,11 +1689,53 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           onCancel={() => retryModalConfig.resolve && retryModalConfig.resolve(false)}
         />
       )}
+
+      {/* HWPX 생성 진행 상태 오버레이 */}
+      {isGeneratingHwpx && (
+        <div className="fixed inset-0 z-[4000] flex items-center justify-center p-6 animate-fade-in pointer-events-none">
+          <div className="bg-surface-container-high border-2 border-primary/50 rounded-[32px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.5)] p-8 flex flex-col gap-6 w-full max-w-md backdrop-blur-xl pointer-events-auto ring-1 ring-white/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-primary/20 rounded-2xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-3xl animate-pulse">description</span>
+                </div>
+                <div>
+                  <h4 className="text-lg font-black text-on-surface">HWPX 문서 조립 중</h4>
+                  <p className="text-xs text-outline font-medium">실시간 진행 로그를 확인하세요.</p>
+                </div>
+              </div>
+              <div className="relative">
+                <div className="w-10 h-10 rounded-full border-4 border-primary/10 border-t-primary animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[10px] font-black text-primary uppercase">OP</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-2 p-5 bg-black/5 rounded-2xl border border-outline-variant/10 max-h-[220px] overflow-y-auto custom-scrollbar shadow-inner font-mono">
+              {hwpxLogs.map((log, i) => (
+                <p key={i} className={`text-[11px] leading-relaxed flex items-start gap-2 ${i === hwpxLogs.length - 1 ? 'text-primary font-black animate-pulse' : 'text-outline-variant/70'}`}>
+                  <span className="shrink-0 mt-1 w-1 h-1 rounded-full bg-current opacity-40"></span>
+                  {log}
+                </p>
+              ))}
+              <div id="hwpx-log-end"></div>
+            </div>
+            
+            <div className="flex items-center gap-2 justify-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-ping"></span>
+                <p className="text-[11px] font-black text-primary/60 tracking-tight">완료 시 자동으로 다운로드가 시작됩니다.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <HwpxFormatModal 
-        isOpen={isHwpxModalOpen}
-        onClose={() => setIsHwpxModalOpen(false)}
-        documentId={props.documentId}
-        onGenerate={handleGenerateHwpx}
+          isOpen={isHwpxModalOpen}
+          onClose={() => setIsHwpxModalOpen(false)}
+          documentId={props.documentId}
+          onGenerate={handleGenerateHwpx}
+          isGeneratingExternal={isGeneratingHwpx}
       />
     </div>
   );

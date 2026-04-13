@@ -10,7 +10,6 @@ class ProjectSaveRequest(BaseModel):
     tree_data: Optional[List[Any]] = None # 초안 편집 후 저장 시 전체 트리 데이터
 
 class ProjectRenameRequest(BaseModel):
-    document_id: str
     new_name: str # 새 프로젝트 명
 
 class IdeaEnhanceRequest(BaseModel):
@@ -31,3 +30,8 @@ class DraftGenerateRequest(BaseModel):
 class HwpxGenerateRequest(BaseModel):
     document_id: str
     style_config: dict
+    mode: Optional[str] = "draft"
+
+class EnhanceGenerateRequest(BaseModel):
+    document_id: str
+    run_deep_research: bool = False
