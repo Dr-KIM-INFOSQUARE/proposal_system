@@ -32,6 +32,76 @@ MODEL_PRICING = {
     "models/gemini-2.5-pro": {"input": 1.25, "output": 10.00},
 }
 
+from collections import defaultdict
+
+class DraftingManager:
+    """백그라운드에서 실행되는 초안 작성 작업을 관리합니다."""
+    def __init__(self):
+        # document_id -> asyncio.Task
+        self.tasks = {}
+        # document_id -> 리스트[asyncio.Queue] (여러 브라우저 연결 대응)
+        self.queues = defaultdict(list)
+        # document_id -> 마지막 상태 메시지 (새로고침 시 복구용)
+        self.last_status = {}
+
+    def is_running(self, document_id: str) -> bool:
+        task = self.tasks.get(document_id)
+        return task is not None and not task.done()
+
+    async def start_task(self, document_id: str, coro_func):
+        if self.is_running(document_id):
+            print(f"[MANAGER] Task already running for {document_id}")
+            return
+        
+        # 실제 코루틴 실행
+        task = asyncio.create_task(coro_func())
+        self.tasks[document_id] = task
+        self.last_status[document_id] = "백그라운드 작업 시작 중..."
+        
+        # 태스크 종료 시 정리
+        task.add_done_callback(lambda t: self._cleanup(document_id))
+        print(f"[MANAGER] Started background task for {document_id}")
+
+    def _cleanup(self, document_id: str):
+        if document_id in self.tasks:
+            del self.tasks[document_id]
+        
+        # 대기 중인 큐들에게 종료 알림 (필요 시)
+        for q in self.queues[document_id]:
+            q.put_nowait(None) # None은 종료 신호로 활용 가능
+        
+        self.queues[document_id] = []
+        print(f"[MANAGER] Cleaned up task for {document_id}")
+
+    def cancel_task(self, document_id: str):
+        task = self.tasks.get(document_id)
+        if task:
+            task.cancel()
+            print(f"[MANAGER] Cancel requested for {document_id}")
+            return True
+        return False
+
+    async def broadcast(self, document_id: str, message: str):
+        """진행 상황을 모든 연결된 큐에 전파합니다."""
+        self.last_status[document_id] = message
+        queues = self.queues.get(document_id, [])
+        for q in queues:
+            await q.put(message)
+
+    def subscribe(self, document_id: str) -> asyncio.Queue:
+        """메시지를 수신할 큐를 생성하고 반환합니다."""
+        q = asyncio.Queue()
+        self.queues[document_id].append(q)
+        return q
+
+    def unsubscribe(self, document_id: str, q: asyncio.Queue):
+        if document_id in self.queues:
+            if q in self.queues[document_id]:
+                self.queues[document_id].remove(q)
+
+# 전역 매니저 인스턴스
+drafting_manager = DraftingManager()
+
 def log_usage(document_id: str, model_id: str, usage: dict, db: Session, task_type: str = "analysis"):
     """토큰 사용량을 계산하고 DB에 기록합니다."""
     # models/ 접두사 일관성 유지
@@ -669,6 +739,19 @@ async def load_project(document_id: str, db: Session = Depends(get_db)):
     }
 
 
+def find_and_update_node_recursive(nodes, target_id, content):
+    """트리 내에서 target_id와 일치하는 노드를 찾아 draft_content를 업데이트합니다."""
+    if not nodes or not isinstance(nodes, list):
+        return nodes
+    
+    for node in nodes:
+        if str(node.get("id")) == str(target_id):
+            node["draft_content"] = content
+            return nodes
+        if "children" in node and node["children"]:
+            find_and_update_node_recursive(node["children"], target_id, content)
+    return nodes
+
 def prepare_tree_for_drafting(nodes):
     """contentChecked를 content로 통일하여 NotebookLM 서비스에 전달할 트리를 준비합니다."""
     if not isinstance(nodes, list):
@@ -687,87 +770,140 @@ def prepare_tree_for_drafting(nodes):
     return result
 
 
+@router.get("/projects/{document_id}/draft/status")
+async def get_draft_status(document_id: str):
+    """현재 초안 작성이 백그라운드에서 진행 중인지 확인합니다."""
+    is_running = drafting_manager.is_running(document_id)
+    last_msg = drafting_manager.last_status.get(document_id, "")
+    return {
+        "is_running": is_running,
+        "last_message": last_msg
+    }
+
+@router.post("/projects/{document_id}/draft/cancel")
+async def cancel_draft_generation(document_id: str):
+    """실행 중인 초안 작성 작업을 중단합니다."""
+    success = drafting_manager.cancel_task(document_id)
+    if success:
+        return {"status": "success", "message": "초안 작성이 중단되었습니다."}
+    else:
+        return {"status": "error", "message": "중단할 작업이 없거나 이미 종료되었습니다."}
+
 @router.post("/projects/{document_id}/draft/generate")
 async def generate_draft_stream(
     document_id: str, 
     request: DraftGenerateRequest,
     db: Session = Depends(get_db)
 ):
-    """5단계 파이프라인(NotebookLM)을 통해 초안을 자동 생성하고 SSE 스트림을 반환합니다."""
-    print(f"[BACKEND] API Request: Generate draft for {document_id}")
+    """백그라운드에서 초안을 생성하거나, 이미 진행 중인 작업의 스트림에 연결합니다."""
+    print(f"[BACKEND] API Request: Generate draft (Background) for {document_id}")
     project = db.query(Project).filter(Project.document_id == document_id).first()
     if not project:
-        print(f"[BACKEND] ERROR: Project not found: {document_id}")
         raise HTTPException(status_code=404, detail="Project not found")
         
     master_brief = project.master_brief
     if not master_brief:
-        print(f"[BACKEND] ERROR: Master brief missing for {document_id}")
         raise HTTPException(status_code=400, detail="Master brief is required. Please complete Step 2 first.")
         
-    # PDF 경로 확인 (양식 가이드용)
     pdf_path = os.path.join(UPLOAD_DIR, f"{document_id}.pdf")
     if not os.path.exists(pdf_path):
-        print(f"[BACKEND] WARNING: Template PDF missing: {pdf_path}")
         pdf_path = None
         
-    # 트리 데이터 준비 (안정성을 위해 DB의 원본 트리를 직접 사용)
-    try:
-        print(f"[BACKEND] Loading raw parsed_tree from DB...")
-        raw_tree = project.parsed_tree or []
-        
-        if not raw_tree or len(raw_tree) == 0:
-            print(f"[BACKEND] ERROR: parsed_tree is empty.")
-            raise HTTPException(status_code=400, detail="문서 구조 가이드가 비어있습니다. '문서 구조 분석' 탭에서 분석을 먼저 수행해 주세요.")
-            
-        # NotebookLM 서비스로 넘기기 전 트리 데이터 정규화
-        document_tree = prepare_tree_for_drafting(raw_tree)
-        print(f"[BACKEND] Final Document tree prepared (nodes: {len(document_tree)})")
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[BACKEND] ERROR during tree preparation: {e}")
-        raise HTTPException(status_code=500, detail=f"데이터 준비 실패: {str(e)}")
+    # 트리 데이터 준비
+    raw_tree = project.parsed_tree or []
+    if not raw_tree:
+        raise HTTPException(status_code=400, detail="문서 구조 분석 데이터가 없습니다.")
+    document_tree = prepare_tree_for_drafting(raw_tree)
+    project_name = project.name
 
-    async def event_generator():
-        print(f"[BACKEND] SSE event_generator started for {document_id}")
+    # 백그라운드에서 상주하며 일할 코루틴 정의
+    async def run_drafting_task():
+        from models.database import SessionLocal # 별도 세션 필요
+        task_db = SessionLocal()
         try:
+            print(f"[TASK] Background drafting started for {document_id}")
             async for progress in notebooklm_service.generate_draft_stream(
                 document_id=document_id,
                 master_brief=master_brief,
                 document_tree=document_tree,
                 pdf_path=pdf_path,
                 research_mode=request.research_mode,
-                project_name=project.name
+                project_name=project_name
             ):
-                print(f"[BACKEND] SSE Yielding progress: {progress[:100]}")
-                data = json.loads(progress)
+                # 1. 메시지 전파 (모든 연결된 큐에 전송)
+                await drafting_manager.broadcast(document_id, progress)
                 
-                # 1. notebook_id가 반환되면 저장
-                if data.get("notebook_id"):
-                    project.notebook_id = data.get("notebook_id")
-                    db.commit()
+                # 2. 중간 저장 로직 (task_db 사용)
+                data = json.loads(progress)
+                task_project = task_db.query(Project).filter(Project.document_id == document_id).first()
+                if not task_project:
+                    continue
 
-                # 2. 성공적으로 완료된 경우 DB에 최종 트리 업데이트
+                if data.get("status") == "node_updated":
+                    node_id = data.get("node_id")
+                    content = data.get("content")
+                    if node_id and content:
+                        import copy
+                        current_tree = copy.deepcopy(task_project.parsed_tree)
+                        updated_tree = find_and_update_node_recursive(current_tree, node_id, content)
+                        task_project.parsed_tree = updated_tree
+                        task_db.commit()
+
+                if data.get("notebook_id"):
+                    task_project.notebook_id = data.get("notebook_id")
+                    task_db.commit()
+
                 if data.get("status") == "completed":
                     final_tree = data.get("tree")
-                    # 방어 로직: 완료 트리 데이터가 비어있으면 DB를 덮어씌우지 않음
                     if final_tree and len(final_tree) > 0:
-                        print(f"[BACKEND] Draft generation completed successfully. Saving tree to DB.")
-                        project.parsed_tree = final_tree
-                        db.commit()
-                    else:
-                        print(f"[BACKEND] WARNING: Completed with empty tree. Skipping DB save to protect structure.")
-                
-                yield f"data: {progress}\n\n"
-                await asyncio.sleep(0.05)
-
+                        task_project.parsed_tree = final_tree
+                        task_db.commit()
+            
+            print(f"[TASK] Background drafting finished for {document_id}")
+        except asyncio.CancelledError:
+            print(f"[TASK] Background drafting CANCELLED for {document_id}")
+            await drafting_manager.broadcast(document_id, json.dumps({"status": "cancelled", "message": "사용자에 의해 작업이 취소되었습니다."}))
         except Exception as e:
-            print(f"[BACKEND] SSE FATAL ERROR: {str(e)}")
-            yield f"data: {json.dumps({'status': 'error', 'message': f'초안 작성 실패: {str(e)}'})}\n\n"
-            return # 즉시 generator 종료
+            print(f"[TASK] Background drafting ERROR: {e}")
+            await drafting_manager.broadcast(document_id, json.dumps({"status": "error", "message": str(e)}))
         finally:
-            print(f"[BACKEND] SSE event_generator closed for {document_id}")
+            task_db.close()
+
+    # 태스크가 실행 중이지 않다면 새로 시작
+    if not drafting_manager.is_running(document_id):
+        await drafting_manager.start_task(document_id, run_drafting_task)
+    else:
+        print(f"[BACKEND] Connecting to existing task for {document_id}")
+
+    # SSE 이벤트 제너레이터 (클라이언트에게 큐 내용 전달)
+    async def event_generator():
+        q = drafting_manager.subscribe(document_id)
+        print(f"[SSE] Client connected via queue for {document_id}")
+        
+        # [복구] 만약 작업이 이미 진행 중이라면 마지막 상태를 먼저 한 번 쏴줌 (새로고침 대응)
+        if drafting_manager.last_status.get(document_id):
+            yield f"data: {drafting_manager.last_status[document_id]}\n\n"
+
+        try:
+            while True:
+                msg = await q.get()
+                if msg is None: # 작업 종료 신호
+                    break
+                yield f"data: {msg}\n\n"
+                
+                # 작업 종료 여부 판단 로직
+                try:
+                    data = json.loads(msg)
+                    if data.get("status") in ["completed", "error", "cancelled"]:
+                        break
+                except:
+                    pass
+                    
+        except asyncio.CancelledError:
+            print(f"[SSE] Client disconnected for {document_id}")
+        finally:
+            drafting_manager.unsubscribe(document_id, q)
+            print(f"[SSE] Subscription closed for {document_id}")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

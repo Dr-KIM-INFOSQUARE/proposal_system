@@ -204,6 +204,23 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
   const [activeMasterBriefTab, setActiveMasterBriefTab] = useState<'edit' | 'preview'>('preview');
 
+  // [신규] 초안 생성 중단 핸들러
+  const handleCancelDraft = async () => {
+    if (!props.documentId) return;
+    if (!window.confirm("정말 초안 작성을 중단하시겠습니까?")) return;
+    
+    try {
+        const res = await api.cancelDraft(props.documentId);
+        if (res.status === 'success') {
+            console.log("[Workflow] Draft generation cancelled by user.");
+            setDraftLogs(prev => [...prev, "> 사용자가 작업을 중단했습니다."]);
+            // SSE 스트림은 자동으로 중단 메시지를 수신하고 종료될 것임
+        }
+    } catch (e) {
+        console.error("[Workflow] Failed to cancel draft:", e);
+    }
+  };
+
   // 초안 생성 실행 (SSE)
   const handleGenerateDraft = async () => {
     if (!props.documentId) {
@@ -211,6 +228,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       return;
     }
     
+    // 이미 진행 중이면 중복 실행 방지
+    if (isGeneratingDraft) return;
+
     const docId = props.documentId;
     const modelToUse = props.selectedModel;
     const modeToUse = researchMode;
@@ -233,16 +253,23 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 treeData
             );
             console.log("[Workflow] Auto-saved tree selection before draft generation.");
-            // UI 상태와의 동기화를 위해 부모에도 컴파일된 선택 데이터를 전달
             props.onSave(selectedIds, contentIds);
         } catch (e) {
             console.error("[Workflow] Failed to auto-save tree selection:", e);
         }
+    } else {
+        console.warn("[Workflow] treeRef is null (Accordion 1 closed). Skipping auto-save, using DB data.");
     }
     
     while (!success) {
       try {
-        setDraftTree([]); // 루프 돌 때마다 초기화
+        // [수정] DB에서 로드된 props.initialTreeData를 사용하여 목차를 즉시 생성
+        const currentTree = props.initialTreeData;
+        if (currentTree && currentTree.length > 0) {
+            setDraftTree(currentTree);
+            // [삭제] if (firstNode) setSelectedNodeId(firstNode.id); -> 시작 시 자동 이동 제거
+        }
+
         if (props.onEnhanceStateChange) {
             props.onEnhanceStateChange(true, "초안 생성 초기화 중...");
         }
@@ -251,13 +278,19 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           docId, 
           modelToUse,
           modeToUse,
-          "pyhwpx",
           (msg) => {
             if (props.onEnhanceStateChange) {
                 props.onEnhanceStateChange(true, msg);
             }
-            // 너무 많은 로그가 누적되지 않게 할 수도 있지만 일반적인 로깅 목적으로 추가
             setDraftLogs(prev => [...prev, `> ${msg}`]);
+          },
+          (nodeId, content) => {
+            console.log(`[Workflow] Real-time update received for node ${nodeId}`);
+            setDraftTree(prev => {
+                const updatedTree = findAndUpdateNode(prev, nodeId, content);
+                return [...updatedTree]; 
+            });
+            // [삭제] setSelectedNodeId(nodeId); -> 강제 이동 제거
           }
         );
 
@@ -266,9 +299,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           if (props.onEnhanceStateChange) {
               props.onEnhanceStateChange(false, "초안 작성이 완료되었습니다.");
           }
-          const firstDraftNode = findFirstContentNode(finalTree);
-          if (firstDraftNode) setSelectedNodeId(firstDraftNode.id);
+          // [삭제] setSelectedNodeId(firstDraftNode.id); -> 완료 시 자동 이동 제거
           success = true;
+          setIsGeneratingDraft(false);
         }
       } catch (err) {
         console.error("[Workflow] Draft generation failed:", err);
@@ -286,16 +319,34 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
         
         if (!retryDecision) {
           setDraftLogs(prev => [...prev, `> [오류] 재시작 취소됨`]);
-          break; // 취소
+          setIsGeneratingDraft(false);
+          break; 
         } else {
           setDraftLogs(prev => [...prev, `> [재시도] 다시 시작 중...`]);
-          // 다음 루프에서 `props.onEnhanceStateChange(true, "초안 생성 초기화 중...")` 가 다시 트리거 됨
         }
       }
     }
-    
     setIsGeneratingDraft(false);
   };
+
+  // [신규] 컴포넌트 마운트 시 백그라운드 상태 체크 및 자동 재연결
+  useEffect(() => {
+    if (activeStep === 3 && !isGeneratingDraft && props.documentId) {
+        const checkStatus = async () => {
+            try {
+                const status = await api.getDraftStatus(props.documentId!);
+                if (status.is_running) {
+                    console.log("[Workflow] Found ongoing background task. Re-connecting...");
+                    setDraftLogs(prev => [...prev, "> 진행 중인 작업을 발견했습니다. 연결 중..."]);
+                    handleGenerateDraft(); 
+                }
+            } catch (e) {
+                console.error("[Workflow] Status check failed:", e);
+            }
+        };
+        checkStatus();
+    }
+  }, [activeStep, props.documentId]);
 
   // 트리에서 첫 번째 컨텐츠 노드 찾기
   const findFirstContentNode = (nodes: DocumentNode[]): DocumentNode | null => {
@@ -958,15 +1009,51 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
            isDisabled={isStepDisabled(3)}
         >
           <div className="flex flex-col bg-surface-container-lowest/50 min-h-[400px]">
-             <div className="p-6 border-b border-outline-variant/10">
-                 <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
-                     <span className="material-symbols-outlined text-primary">auto_stories</span>
-                     NotebookLM 기반 팩트 수집 및 초안 생성
-                 </h4>
-                 <p className="text-xs text-outline leading-relaxed mt-1">
-                     실시간 검색 데이터와 마스터 브리프를 조합하여 목차별 근거 중심 초안을 생성합니다.
-                 </p>
-             </div>
+              <div className="p-6 border-b border-outline-variant/10 flex items-center justify-between">
+                  <div>
+                      <h4 className="text-base font-bold text-on-surface flex items-center gap-2">
+                          <span className="material-symbols-outlined text-primary">auto_stories</span>
+                          NotebookLM 기반 팩트 수집 및 초안 생성
+                      </h4>
+                      <p className="text-xs text-outline leading-relaxed mt-1">
+                          실시간 검색 데이터와 마스터 브리프를 조합하여 목차별 근거 중심 초안을 생성합니다.
+                      </p>
+                  </div>
+
+                  {/* [신규] 상단 인라인 상태 바 (Global Status) */}
+                  {isGeneratingDraft && (
+                    <div className="flex items-center gap-4 bg-primary/5 px-4 py-2.5 rounded-2xl border border-primary/10 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <div className="w-8 h-8 rounded-full border-2 border-primary/20 border-t-primary animate-spin"></div>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-[14px] text-primary animate-pulse">sync</span>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-primary uppercase tracking-wider">AI Drafting...</span>
+                          </div>
+                          <p className="text-[11px] text-on-surface font-bold truncate max-w-[300px]">
+                            {draftLogs.length > 0 ? draftLogs[draftLogs.length - 1].replace('> ', '') : '작업 준비 중...'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* [신규] 취소 버튼 */}
+                      <button 
+                        onClick={handleCancelDraft}
+                        className="ml-2 p-1.5 hover:bg-error/10 text-error rounded-lg transition-colors group relative"
+                        title="작업 취소"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">cancel</span>
+                        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-on-surface text-surface text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                          작업 중단
+                        </span>
+                      </button>
+                    </div>
+                  )}
+              </div>
 
              <div className="flex-1 w-full">
                 {draftTree.length === 0 && !isGeneratingDraft ? (
@@ -1017,43 +1104,10 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                          ✨ {researchMode === 'deep' ? 'DEEP' : 'FAST'} 초안 생성 시작
                       </button>
                    </div>
-                ) : isGeneratingDraft ? (
-                   <div className="flex flex-col items-center justify-center p-12 gap-6 bg-surface-container-lowest/30 min-h-[400px]">
-                      <div className="relative">
-                         <div className="w-24 h-24 rounded-full border-4 border-primary/10 border-t-primary animate-spin"></div>
-                         <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="material-symbols-outlined text-4xl text-primary animate-pulse">
-                               {researchMode === 'deep' ? 'search_insights' : 'bolt'}
-                            </span>
-                         </div>
-                      </div>
-                      
-                      <div className="text-center space-y-2">
-                         <div className="flex items-center justify-center gap-2">
-                            <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-black rounded-full uppercase tracking-wider">
-                               {researchMode} Mode Active
-                            </span>
-                         </div>
-                         <h5 className="font-bold text-on-surface">AI가 초안을 작성하고 있습니다</h5>
-                         <p className="text-xs text-outline max-w-xs mx-auto leading-relaxed">
-                            실시간 리서치 데이터를 분석하여 각 섹션별 최적의 내용을 구성 중입니다. 잠시만 기다려 주세요.
-                         </p>
-                      </div>
-
-                      <div className="w-full max-w-md space-y-3">
-                         <div className="flex justify-between items-end px-1">
-                            <span className="text-[10px] font-bold text-primary uppercase tracking-tight">Status</span>
-                            <span className="text-[10px] font-medium text-outline">
-                               {draftLogs.length > 0 ? draftLogs[draftLogs.length - 1].replace('> ', '') : '초기화 중...'}
-                            </span>
-                         </div>
-                         <div className="h-1.5 w-full bg-surface-container-high rounded-full overflow-hidden">
-                            <div className="h-full bg-primary animate-[shimmer_2s_infinite] w-full origin-left shadow-[0_0_10px_rgba(56,107,245,0.4)]"></div>
-                         </div>
-                      </div>
-                   </div>
                 ) : (
                    <div className="flex flex-col md:flex-row items-start gap-6 p-6 relative">
+                      {/* [삭제] 기존의 absolute 상단 바를 제거함 */}
+
                       <div className="flex-1 min-w-0 bg-surface rounded-2xl border border-outline-variant/10 shadow-sm overflow-hidden">
                          <div className="p-4 border-b border-outline-variant/5 bg-surface-container-high/20">
                             <span className="text-xs font-black text-on-surface uppercase tracking-wider flex items-center gap-2">
@@ -1110,7 +1164,26 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                   </div>
                                </div>
                                
-                               <div className="h-[700px] overflow-y-auto p-8 custom-scrollbar bg-surface-container-lowest">
+                                <div className="h-[700px] overflow-y-auto p-8 custom-scrollbar bg-surface-container-lowest relative">
+                                   {isGeneratingDraft && (!selectedNode.draft_content || selectedNode.draft_content.trim() === '') && (
+                                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/20 backdrop-blur-[4px] animate-in fade-in duration-700">
+                                           <div className="bg-white/90 p-8 rounded-3xl shadow-xl border border-primary/10 flex flex-col items-center gap-4 max-w-xs text-center transform scale-110">
+                                               <div className="relative">
+                                                  <div className="w-16 h-16 rounded-full border-4 border-primary/10 border-t-primary animate-spin"></div>
+                                                  <div className="absolute inset-0 flex items-center justify-center">
+                                                     <span className="material-symbols-outlined text-2xl text-primary animate-pulse">edit_note</span>
+                                                  </div>
+                                               </div>
+                                               <div>
+                                                  <p className="text-sm font-black text-on-surface">본문을 작성하고 있습니다</p>
+                                                  <p className="text-[11px] text-outline mt-1 leading-relaxed">AI가 리서치 데이터를 바탕으로 최적의 초안을 구성 중입니다.</p>
+                                               </div>
+                                               <div className="w-full h-1 bg-surface-container-high rounded-full overflow-hidden mt-2">
+                                                  <div className="h-full bg-primary animate-[shimmer_2s_infinite] w-full origin-left"></div>
+                                               </div>
+                                           </div>
+                                       </div>
+                                   )}
                                   {activeTab === 'edit' ? (
                                      <textarea
                                         value={selectedNode.draft_content || ''}

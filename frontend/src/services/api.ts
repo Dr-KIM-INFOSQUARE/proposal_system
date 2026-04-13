@@ -242,7 +242,13 @@ export const api = {
     return response.json();
   },
 
-  generateDraftStream: async (documentId: string, modelId: string, researchMode: 'fast' | 'deep' = 'deep', onProgress: (msg: string) => void) => {
+  generateDraftStream: async (
+    documentId: string, 
+    modelId: string, 
+    researchMode: 'fast' | 'deep' = 'deep', 
+    onProgress: (msg: string) => void,
+    onNodeUpdate?: (nodeId: string | number, content: string) => void
+  ) => {
     console.log(`[API] Starting generateDraftStream for ${documentId} (Mode: ${researchMode})`);
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/generate`, {
       method: 'POST',
@@ -305,6 +311,9 @@ export const api = {
               if (data.status === 'completed') {
                 console.log("[API] Success mark found. Saving finalTree.");
                 finalTree = data.tree;
+              } else if (data.status === 'node_updated' && onNodeUpdate) {
+                // [신규] 개별 노드 업데이트 처리
+                onNodeUpdate(data.node_id, data.content);
               } else if (data.research_completed) {
                 // 리서치 스킵/완료 시에도 상태 메시지 표시용
                 onProgress(`리서치 상태 확인 완료: ${data.research_mode || researchMode}`);
@@ -330,6 +339,24 @@ export const api = {
 
     console.log("[API] Returning finalTree:", finalTree ? "WITH CONTENT" : "EMPTY/NULL");
     return finalTree;
+  },
+
+  /**
+   * 실행 중인 초안 작성을 중단합니다.
+   */
+  async cancelDraft(documentId: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/cancel`, {
+      method: 'POST',
+    });
+    return response.json();
+  },
+
+  /**
+   * 초안 작성 작업의 백그라운드 진행 상태를 확인합니다.
+   */
+  async getDraftStatus(documentId: string): Promise<{ is_running: boolean; last_message: string }> {
+    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/draft/status`);
+    return response.json();
   },
 
   uploadDocumentStream: async (file: File, modelId: string, onProgress: (msg: string) => void) => {

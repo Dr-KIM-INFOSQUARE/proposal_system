@@ -319,10 +319,23 @@ class NotebookLMService:
                         table_metadata = node.get("tableMetadata")
                         node_type = node.get("type")
 
-                        print(f"[NOTEBOOKLM_SERVICE] Drafting section: {title}")
-                        yield json.dumps({"phase": 5, "status": f"작성 중: {title}"})
+                        # [추가] 이미 초안 내용이 존재한다면 작성을 건너뜀 (이어하기 지원)
+                        current_draft = node.get("draft_content")
+                        if current_draft and str(current_draft).strip() and len(str(current_draft).strip()) > 50:
+                            print(f"[NOTEBOOKLM_SERVICE] Skipping section (already drafted): {title}")
+                            yield json.dumps({"phase": 5, "status": f"건너뜀: {title}"})
+                            # 이미 존재하더라도 실시간 업데이트 이벤트를 한 번 더 쏴줌으로써 프론트엔드와 동기화
+                            yield json.dumps({
+                                "status": "node_updated", 
+                                "node_id": node.get("id"), 
+                                "content": current_draft
+                            })
+                            # 자식 노드 순회를 위해 continue 대신 루프 하단으로 이동
+                        else:
+                            print(f"[NOTEBOOKLM_SERVICE] Drafting section: {title}")
+                            yield json.dumps({"phase": 5, "status": f"작성 중: {title}"})
 
-                        prompt_parts = [f"작성할 목차: [{title}]\n"]
+                            prompt_parts = [f"작성할 목차: [{title}]\n"]
                         if writing_guide and str(writing_guide).strip():
                             prompt_parts.append(f"- 양식 작성 가이드: {writing_guide}\n(위 가이드라인의 의도를 완벽하게 충족하도록 작성할 것.)\n")
                         if user_instruction and str(user_instruction).strip():
@@ -361,6 +374,12 @@ class NotebookLMService:
                             
                         if node.get("draft_content"):
                             node["draft_content"] = self._clean_citations(node["draft_content"])
+                            # [추가] 실시간 업데이트를 위해 노드 내용이 완성되자마자 즉시 yield
+                            yield json.dumps({
+                                "status": "node_updated", 
+                                "node_id": node.get("id"), 
+                                "content": node["draft_content"]
+                            })
                             
                     if "children" in node and node["children"]:
                         async for prog in write_sections_recursive(node["children"]):
