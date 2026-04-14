@@ -246,7 +246,7 @@ function App() {
   };
 
   const handleReset = () => {
-    if (confirm("현재 작업을 초기화하시겠습니까? 저장되지 않은 변경사항은 사라질 수 있습니다.")) {
+    if (confirm("경고! 저장되지 않은 변경사항은 사라질 수 있습니다.")) {
       setCurrentDocumentId(null);
       setTreeData([]);
       setFileName(null);
@@ -339,6 +339,7 @@ function App() {
                 initialMasterBrief={initialMasterBrief}
                 initialIdeaData={initialIdeaData}
                 fileName={fileName}
+                originalFileName={originalFileName}
                 fileSize={fileSize}
                 pdfUrl={pdfUrl}
                 documentId={currentDocumentId}

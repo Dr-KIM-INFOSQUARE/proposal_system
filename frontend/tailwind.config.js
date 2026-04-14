@@ -59,9 +59,9 @@ export default {
         "tertiary-fixed": "#ffdbcd"
       },
       fontFamily: {
-        "headline": ["Manrope", "sans-serif"],
-        "body": ["Inter", "sans-serif"],
-        "label": ["Inter", "sans-serif"]
+        "headline": ["Fira Code", "Noto Sans KR", "sans-serif"],
+        "body": ["Fira Code", "Noto Sans KR", "sans-serif"],
+        "label": ["Fira Code", "Noto Sans KR", "sans-serif"]
       },
       borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" },
     },

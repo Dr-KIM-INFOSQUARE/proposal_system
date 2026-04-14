@@ -47,8 +47,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="material-symbols-outlined text-white">account_tree</span>
               </div>
               <div>
-                <h1 className="text-lg lg:text-xl font-extrabold text-[#191c1e] dark:text-white font-headline tracking-tight">PlanWeaver AI</h1>
-                <p className="text-[0.625rem] lg:text-[0.6875rem] font-label uppercase tracking-[0.05rem] text-outline">Analytical Architect</p>
+                <h1 className="text-lg lg:text-xl font-extrabold text-[#191c1e] dark:text-white font-headline tracking-tight">사업계획서 생성 AI</h1>
+                <p className="text-[0.625rem] lg:text-[0.7rem] font-label uppercase tracking-[0.05rem] text-outline">당신의 제안서를 위한 완벽한 툴</p>
               </div>
             </div>
             <button onClick={onToggle} className="lg:hidden p-2 text-outline hover:text-on-surface bg-surface-container rounded-lg">

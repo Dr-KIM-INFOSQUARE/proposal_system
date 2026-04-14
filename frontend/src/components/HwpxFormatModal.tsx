@@ -44,13 +44,13 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
   const [paragraphBaseStyle, setParagraphBaseStyle] = useState<BaseStyle>({
     font_family: '휴먼명조',
     line_spacing: 160,
-    alignment: 'Justify'
+    alignment: 'Left'
   });
 
   const [tableBaseStyle, setTableBaseStyle] = useState<BaseStyle>({
     font_family: '맑은 고딕',
-    line_spacing: 160,
-    alignment: 'Center'
+    line_spacing: 130,
+    alignment: 'Left'
   });
 
   const [paragraphBullets, setParagraphBullets] = useState<Record<string, BulletStyle>>({});

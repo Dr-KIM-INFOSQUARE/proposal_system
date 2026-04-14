@@ -127,6 +127,7 @@ interface AnalysisWorkflowProps {
   documentId: string | null;
   selectedModel: string;
   fileName: string | null;
+  originalFileName: string | null;
   fileSize: string | null;
   initialIdeaData?: string;
   pdfUrl?: string | null;
@@ -153,6 +154,27 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const [isHwpxModalOpen, setIsHwpxModalOpen] = useState<boolean>(false);
   const [hwpxMode, setHwpxMode] = useState<'draft' | 'enhanced'>('draft');
   const [detectedLevels, setDetectedLevels] = useState<{paragraph: string[], table: string[]}>({paragraph: [], table: []});
+
+  // [신규] 단계 간 선택항목 유지를 위한 내부 상태
+  const [internalSelectedIds, setInternalSelectedIds] = useState<(string | number)[]>(props.selectedNodeIds || []);
+  const [internalContentIds, setInternalContentIds] = useState<(string | number)[]>(props.contentNodeIds || []);
+
+  // 헬퍼 함수들을 상단으로 이동
+  const hasDraftContent = (nodes: DocumentNode[]): boolean => {
+    for (const node of nodes) {
+      if (node.draft_content) return true;
+      if (node.children && hasDraftContent(node.children)) return true;
+    }
+    return false;
+  };
+
+  const hasEnhancedContent = (nodes: DocumentNode[]): boolean => {
+    for (const node of nodes) {
+      if (node.extended_content) return true;
+      if (node.children && hasEnhancedContent(node.children)) return true;
+    }
+    return false;
+  };
 
   // [신규] 문서 내용을 분석하여 사용된 단계를 추출하는 함수
   const analyzeContentLevels = (nodes: DocumentNode[], mode: 'draft' | 'enhanced') => {
@@ -196,11 +218,20 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   const handleOpenHwpxModal = async (mode: 'draft' | 'enhanced' = 'draft') => {
     if (!props.documentId) return;
     try {
-      const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
-      const treeData = treeRef.current?.getTreeData() || [];
+      let selectedIds: (string | number)[] = [];
+      let contentIds: (string | number)[] = [];
+      
+      if (treeRef.current) {
+        const ids = treeRef.current.getSelectedIds();
+        selectedIds = ids.selectedIds;
+        contentIds = ids.contentIds;
+      } else {
+        selectedIds = internalSelectedIds;
+        contentIds = internalContentIds;
+      }
       
       // 선택된 것이 하나도 없는데 트리는 있다면 저장을 건너뜁니다 (데이터 보호)
-      if (selectedIds.length === 0 && treeData.length > 0) {
+      if (selectedIds.length === 0 && draftTree.length > 0) {
         console.warn("[Workflow] Skipping auto-save in HwpxModal: No nodes selected.");
       } else {
         await api.saveProject(props.documentId, props.fileName || "Untitled", props.fileName || "Unknown File", selectedIds, contentIds, draftTree);
@@ -276,7 +307,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   // Step 3 UI States
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [draftLogs, setDraftLogs] = useState<string[]>([]);
-  const [draftTree, setDraftTree] = useState<DocumentNode[]>([]);
+  const [draftTree, setDraftTree] = useState<DocumentNode[]>(props.initialTreeData || []);
   const [selectedNodeId, setSelectedNodeId] = useState<string | number | null>(null);
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('preview');
   const [researchMode, setResearchMode] = useState<'fast' | 'deep'>('deep');
@@ -536,6 +567,49 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     }
   }, [activeStep, props.documentId]);
 
+  // Props 변경 시 내부 상태 동기화 (ID가 바뀌어 remount 될 때 포함)
+  useEffect(() => {
+    if (props.selectedNodeIds) {
+      setInternalSelectedIds(props.selectedNodeIds);
+    }
+    if (props.contentNodeIds) {
+      setInternalContentIds(props.contentNodeIds);
+    }
+  }, [props.selectedNodeIds, props.contentNodeIds]);
+
+  useEffect(() => {
+    if (props.initialTreeData && props.initialTreeData.length > 0) {
+      // 초안 내용 유무와 상관없이 항상 draftTree 동기화 (구조 유지)
+      setDraftTree(props.initialTreeData);
+      
+      const newCompleted = [...completedSteps];
+      
+      // Step 1: 분석 및 선택 완료 여부
+      if ((props.selectedNodeIds && props.selectedNodeIds.length > 0) || (internalSelectedIds.length > 0)) {
+        if (!newCompleted.includes(1)) newCompleted.push(1);
+      }
+      
+      // Step 2: 아이디어 고도화 완료 여부
+      if (props.initialMasterBrief && props.initialMasterBrief.trim() !== '') {
+        if (!newCompleted.includes(2)) newCompleted.push(2);
+      }
+      
+      if (hasDraftContent(props.initialTreeData)) {
+        if (!newCompleted.includes(3)) newCompleted.push(3);
+      }
+      
+      // Step 4: 전문가 고도화 완료 여부
+      if (hasEnhancedContent(props.initialTreeData)) {
+        if (!newCompleted.includes(1)) newCompleted.push(1);
+        if (!newCompleted.includes(2)) newCompleted.push(2);
+        if (!newCompleted.includes(3)) newCompleted.push(3);
+        if (!newCompleted.includes(4)) newCompleted.push(4);
+      }
+      
+      setCompletedSteps(newCompleted);
+    }
+  }, [props.initialTreeData, props.initialMasterBrief]);
+
   const selectedNode = selectedNodeId ? (function find(nodes: DocumentNode[]): DocumentNode | undefined {
     for (const n of nodes) {
       if (n.id === selectedNodeId) return n;
@@ -567,47 +641,6 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
     }
   }, [props.initialTreeData]);
   
-  // 기존 초안 데이터 복원 및 3단계 완료 처리
-  useEffect(() => {
-      const hasDraftContent = (nodes: DocumentNode[]): boolean => {
-        for (const node of nodes) {
-          if (node.draft_content) return true;
-          if (node.children && hasDraftContent(node.children)) return true;
-        }
-        return false;
-      };
-
-      const hasEnhancedContent = (nodes: DocumentNode[]): boolean => {
-        for (const node of nodes) {
-          if (node.extended_content) return true;
-          if (node.children && hasEnhancedContent(node.children)) return true;
-        }
-        return false;
-      };
-
-      if (hasDraftContent(props.initialTreeData)) {
-        console.log("[Workflow] Existing draft/enhanced content found. Restoring draftTree.");
-        setDraftTree(props.initialTreeData);
-        
-        setCompletedSteps(prev => {
-          const newSteps = [...prev];
-          [1, 2, 3].forEach(s => {
-            if (!newSteps.includes(s)) newSteps.push(s);
-          });
-          // 고도화 내용(extended_content)이 있으면 4단계도 완료 처리
-          if (hasEnhancedContent(props.initialTreeData) && !newSteps.includes(4)) {
-            newSteps.push(4);
-          }
-          return newSteps;
-        });
-
-        const firstDraftNode = findFirstContentNode(props.initialTreeData);
-        if (firstDraftNode && !selectedNodeId) {
-          setSelectedNodeId(firstDraftNode.id);
-        }
-      }
-  }, [props.initialTreeData]);
-
   // 마스터 브리프 초기화
   useEffect(() => {
     if (props.initialMasterBrief) {
@@ -773,12 +806,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                     </div>
                     
                     <div className="flex-1 min-w-0">
-                        {props.fileName && (
-                            <p className="text-lg font-bold text-on-surface truncate">{props.fileName}</p>
+                        {props.originalFileName && (
+                            <p className="text-lg font-bold text-on-surface truncate">{props.originalFileName}</p>
                         )}
-                        <p className="text-xs md:text-sm font-medium text-outline mt-1">
-                            {props.fileSize ? `용량: ${props.fileSize}` : '(.hwpx, .docx, .pdf 선택 가능)'}
-                        </p>
                     </div>
                 </div>
 
@@ -1453,7 +1483,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                onClick={async () => {
                                    if (!props.documentId) return;
                                    try {
-                                       const { selectedIds, contentIds } = treeRef.current?.getSelectedIds() || { selectedIds: [], contentIds: [] };
+                                       // treeRef.current가 없으면 internal state 사용
+                                       const selectedIds = treeRef.current ? treeRef.current.getSelectedIds().selectedIds : internalSelectedIds;
+                                       const contentIds = treeRef.current ? treeRef.current.getSelectedIds().contentIds : internalContentIds;
                                        await api.saveProject(props.documentId, props.fileName || 'Untitled', props.fileName || 'Unknown File', selectedIds, contentIds, draftTree);
                                        handleStepCompletion(3);
                                        alert("초안 내용이 성공적으로 저장되었습니다!");
