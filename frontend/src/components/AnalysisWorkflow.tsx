@@ -47,7 +47,7 @@ interface MarkdownContentProps {
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, className }) => {
   // \n 문자열이나 <br> 태그를 처리합니다. 중복된(2개 이상) 줄바꿈은 하나로 통일하여 정규화합니다.
-  const processedContent = (content || '내용이 없습니다.')
+  const processedContent = (content || '')
     .replace(/\\n/g, '<br />')
     .replace(/(<br\s*\/?>\s*){2,}/gi, '<br />');
   
@@ -129,6 +129,8 @@ interface AnalysisWorkflowProps {
   fileName: string | null;
   originalFileName: string | null;
   fileSize: string | null;
+  selectedNodeIds: (string | number)[];
+  contentNodeIds: (string | number)[];
   initialIdeaData?: string;
   pdfUrl?: string | null;
   onSave: (selectedIds: (string | number)[], contentIds: (string | number)[], treeData?: DocumentNode[]) => void;
@@ -1419,6 +1421,12 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                                 AI 초안을 바탕으로 내용을 검토하고 실정에 맞게 보완해 주세요. 마크다운 형식이 자동 적용됩니다.
                                             </p>
                                         </div>
+                                        {!selectedNode.draft_content && (
+                                            <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+                                                <span className="material-symbols-outlined text-6xl mb-4">bolt</span>
+                                                <p className="text-sm font-bold">내용이 없는 항목입니다.</p>
+                                            </div>                                            
+                                        )}                                        
                                         <MarkdownContent content={selectedNode.draft_content || ''} />
                                      </div>
                                   )}
@@ -1429,9 +1437,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center mb-6">
                                   <span className="material-symbols-outlined text-4xl text-primary/30">touch_app</span>
                                </div>
-                               <h5 className="font-bold text-on-surface mb-2">섹션을 선택해 주세요</h5>
-                               <p className="text-xs text-outline leading-relaxed max-w-[200px]">
-                                  좌측 목차에서 내용을 확인하거나 수정할 섹션을 클릭하세요.
+                               <h5 className="font-bold text-on-surface mb-2">항목을 선택해 주세요</h5>
+                               <p className="text-xs text-outline leading-relaxed max-w-[300px]">
+                                  좌측 목차에서 확인할 초안 항목을 클릭하세요.
                                 </p>
                             </div>
                          )}
@@ -1670,14 +1678,20 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                                     기존에 작성된 초안 내용입니다. 고도화본과 비교하여 검토해 보세요.
                                                 </p>
                                             </div>
-                                            <MarkdownContent content={selectedNode.draft_content || '내용이 없습니다.'} />
+                                            {!selectedNode.draft_content && !isEnhancingProposal && (
+                                                <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+                                                    <span className="material-symbols-outlined text-6xl mb-4">bolt</span>
+                                                    <p className="text-sm font-bold">내용이 없는 항목입니다.</p>
+                                                </div>                                            
+                                            )}
+                                            <MarkdownContent content={selectedNode.draft_content || ''} />
                                          </>
                                       ) : (
                                          <>
                                             {!selectedNode.extended_content && !isEnhancingProposal && (
                                                 <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
                                                    <span className="material-symbols-outlined text-6xl mb-4">bolt</span>
-                                                   <p className="text-sm font-bold">아직 고도화되지 않은 항목입니다.</p>
+                                                   <p className="text-sm font-bold">내용이 없는 항목입니다.</p>
                                                 </div>
                                             )}
                                             <MarkdownContent content={selectedNode.extended_content || ''} />
@@ -1692,8 +1706,8 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                    <span className="material-symbols-outlined text-4xl text-tertiary/30">auto_fix_high</span>
                                 </div>
                                 <h5 className="font-bold text-on-surface mb-2">항목을 선택해 주세요</h5>
-                                <p className="text-xs text-outline leading-relaxed max-w-[200px]">
-                                   좌측 목차에서 고도화된 내용을 확인할 섹션을 클릭하세요.
+                                <p className="text-xs text-outline leading-relaxed max-w-[300px]">
+                                   좌측 목차에서 확인할 고도화 항목을 클릭하세요.
                                  </p>
                              </div>
                           )}

@@ -243,19 +243,25 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
           {/* Dynamic Bullets Settings with Tabs */}
           <div className="flex flex-col gap-3">
             <div className="flex justify-between items-end mb-2 px-1">
-              <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-xl">
-                 <button 
-                   onClick={() => setActiveTab('paragraph')}
-                   className={`px-4 py-1.5 rounded-lg text-[13px] font-black transition-all ${activeTab === 'paragraph' ? 'bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)] text-primary' : 'text-outline hover:text-on-surface'}`}
-                 >
-                   본문 설정
-                 </button>
-                 <button 
-                   onClick={() => setActiveTab('table')}
-                   className={`px-4 py-1.5 rounded-lg text-[13px] font-black transition-all ${activeTab === 'table' ? 'bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)] text-primary' : 'text-outline hover:text-on-surface'}`}
-                 >
-                   표 설정
-                 </button>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-xl">
+                   <button 
+                     onClick={() => setActiveTab('paragraph')}
+                     className={`px-4 py-1.5 rounded-lg text-[13px] font-black transition-all ${activeTab === 'paragraph' ? 'bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)] text-primary' : 'text-outline hover:text-on-surface'}`}
+                   >
+                     본문 설정
+                   </button>
+                   <button 
+                     onClick={() => setActiveTab('table')}
+                     className={`px-4 py-1.5 rounded-lg text-[13px] font-black transition-all ${activeTab === 'table' ? 'bg-white shadow-[0_2px_8px_rgba(0,0,0,0.05)] text-primary' : 'text-outline hover:text-on-surface'}`}
+                   >
+                     표 설정
+                   </button>
+                </div>
+                <p className="hidden sm:flex text-[11px] font-bold text-outline items-center gap-1.5 opacity-80 mb-0.5">
+                  <span className="material-symbols-outlined text-[14px] text-secondary">lightbulb</span>
+                  들여쓰기 1은 스페이스바 1칸을 의미합니다.
+                </p>
               </div>
 
               <button
@@ -275,27 +281,44 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                     {level}
                   </div>
                   
-                  <div className="flex-1 flex flex-wrap gap-5 items-center w-full sm:-ml-2 sm:pl-4 sm:border-l border-outline-variant/10">
-                    <div className="flex items-center gap-3">
-                      <label className="text-[11px] uppercase tracking-wider text-outline font-black whitespace-nowrap">글자 크기 (pt)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="72"
-                        disabled={isGenerating}
-                        value={config.font_size}
-                        onChange={(e) => handleLevelChange(level, 'font_size', parseInt(e.target.value) || 12)}
-                        className="w-[60px] text-[15px] font-mono font-bold text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-2 px-3 disabled:bg-surface-container disabled:text-outline transition-all text-center hover:border-outline outline-none"
-                      />
+                  <div className="flex-1 flex flex-col gap-3.5 w-full sm:-ml-2 sm:pl-5 sm:border-l border-outline-variant/10">
+                    {/* 상단: 글자 크기 및 들여쓰기 */}
+                    <div className="flex flex-wrap items-center gap-6">
+                      <div className="flex items-center gap-3">
+                        <label className="text-[11px] tracking-wider text-outline font-black whitespace-nowrap">글자 크기(pt)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="72"
+                          disabled={isGenerating}
+                          value={config.font_size}
+                          onChange={(e) => handleLevelChange(level, 'font_size', parseInt(e.target.value) || 12)}
+                          className="w-[77px] text-[15px] font-mono font-bold text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-1.5 px-3 disabled:bg-surface-container disabled:text-outline transition-all text-center hover:border-outline outline-none"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <label className="text-[11px] uppercase tracking-wider text-outline font-black whitespace-nowrap">들여쓰기 횟수</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          disabled={isGenerating}
+                          value={config.spaces}
+                          onChange={(e) => handleLevelChange(level, 'spaces', parseInt(e.target.value) || 0)}
+                          className="w-[77px] text-[15px] font-mono font-bold text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-1.5 px-3 disabled:bg-surface-container disabled:text-outline transition-all text-center hover:border-outline outline-none"
+                        />
+                      </div>
                     </div>
 
+                    {/* 하단: 글머리 기호 */}
                     <div className="flex items-center gap-3">
                       <label className="text-[11px] uppercase tracking-wider text-outline font-black whitespace-nowrap">글머리 기호</label>
                       <select
                         value={config.symbol}
                         disabled={isGenerating || level === '일반'}
                         onChange={(e) => handleLevelChange(level, 'symbol', e.target.value)}
-                        className="text-[14px] font-medium text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-2 pl-4 pr-10 bg-white disabled:bg-surface-container disabled:text-outline transition-all cursor-pointer hover:border-outline outline-none"
+                        className="flex-1 max-w-[280px] text-[14px] font-medium text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-1.5 pl-4 pr-10 bg-white disabled:bg-surface-container disabled:text-outline transition-all cursor-pointer hover:border-outline outline-none"
                       >
                         <option value="">없음</option>
                         <option value="274D">❍ (그림자 원)</option>
@@ -308,19 +331,6 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                         <option value="25AB">▫ (작은 투명 네모)</option>
                         <option value="2578">⁃ (하이픈)</option>
                       </select>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <label className="text-[11px] uppercase tracking-wider text-outline font-black whitespace-nowrap">들여쓰기 횟수</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        disabled={isGenerating}
-                        value={config.spaces}
-                        onChange={(e) => handleLevelChange(level, 'spaces', parseInt(e.target.value) || 0)}
-                        className="w-[72px] text-[15px] font-mono font-bold text-on-surface border border-outline-variant/30 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-500 focus:ring focus:ring-violet-500/20 py-2 px-3 disabled:bg-surface-container disabled:text-outline transition-all text-center hover:border-outline outline-none"
-                      />
                     </div>
                   </div>
 
@@ -335,11 +345,6 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                 </div>
               ))}
             </div>
-            
-            <p className="text-[12px] font-bold text-outline mt-3 flex items-center gap-1.5 px-2">
-              <span className="material-symbols-outlined text-[16px] text-secondary">lightbulb</span>
-              미리보기: 들여쓰기 1은 스페이스바 1칸을 의미합니다. (표 내부는 가로폭이 좁아 적은 들여쓰기를 권장합니다.)
-            </p>
           </div>
 
         </div>
