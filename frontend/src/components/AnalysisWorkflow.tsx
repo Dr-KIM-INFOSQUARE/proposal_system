@@ -141,6 +141,7 @@ interface AnalysisWorkflowProps {
   onStartAnalysis: () => void;
   onCancelSelection: () => void;
   onTitleChange: (title: string) => void;
+  onDocumentIdGenerated?: (id: string, name?: string) => void;
   hasSelectedFile: boolean;
   uploadMessage?: string | null;
   onEnhanceStateChange?: (active: boolean, msg?: string) => void;
@@ -148,7 +149,7 @@ interface AnalysisWorkflowProps {
 }
 
 export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
-  const [activeStep, setActiveStep] = useState<number>(1);
+  const [activeStep, setActiveStep] = useState<number | null>(null);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const treeRef = useRef<DocumentTreeRef>(null);
   const cancelDraftRef = useRef<boolean>(false);
@@ -637,9 +638,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       }
     } else {
       setCompletedSteps([]);
-      if (props.hasSelectedFile || props.isAnalyzing) {
-        setActiveStep(1);
-      }
+      // [삭제] setActiveStep(1); -> 초기 로딩 시 모든 아코디언을 닫아두기 위해 제거
     }
   }, [props.initialTreeData]);
   
@@ -727,7 +726,9 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   };
 
   const isStepDisabled = (step: number) => {
-    if (step === 1) return false;
+    if (step === 1 || step === 2) return false; // 1, 2단계는 독립적으로 언제든 사용 가능
+    if (step === 3) return !completedSteps.includes(1); // 3단계(초안)는 1단계(분석)가 반드시 선행되어야 함
+    if (step === 4) return !completedSteps.includes(1) || !completedSteps.includes(3); // 4단계(고도화)는 1단계와 3단계가 선행되어야 함
     return !completedSteps.includes(step - 1);
   };
 
@@ -973,97 +974,124 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
                 <button 
                     onClick={async () => {
-                        let finalPrompt = '';
-                        if (ideaMode === 'guide') {
-                           if (!guideAnswers.q1.trim()) return alert("1번 '아이템 한 줄 요약'은 필수입니다.");
-                           finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}`;
-                        } else {
-                           if (!ideaText.trim()) return alert("자유 입력 모드에 내용을 입력해주세요.");
-                           finalPrompt = ideaText.trim();
-                        }
+                        try {
+                            let finalPrompt = '';
+                            if (ideaMode === 'guide') {
+                               if (!guideAnswers.q1.trim()) return alert("1번 '아이템 한 줄 요약'은 필수입니다.");
+                               finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}`;
+                            } else {
+                               if (!ideaText.trim()) return alert("자유 입력 모드에 내용을 입력해주세요.");
+                               finalPrompt = ideaText.trim();
+                            }
 
-                        if (!props.documentId) return alert("프로젝트가 저장되지 않았습니다. 문서 구조 분석을 먼저 저장해주세요.");
-                        
-                        setIsEnhancing(true);
-                        let success = false;
-                        
-                        while (!success) {
-                          try {
-                              const initialIdeaJsonToSave = JSON.stringify({
-                                  mode: ideaMode,
-                                  guideAnswers,
-                                  ideaText
-                              });
-                              
-                              let currentMasterBrief = masterBrief;
-                              if (masterBriefData) currentMasterBrief = JSON.stringify(masterBriefData);
-                              
-                              api.saveMasterBrief(props.documentId, currentMasterBrief, initialIdeaJsonToSave).catch(e => console.error("Auto-save failed", e));
-                              
-                              if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "최신 웹 검색을 통해 시장 조사를 진행하는 중입니다...");
-                              
-                              const res = await api.enhanceIdeaStream(props.documentId, finalPrompt, props.selectedModel, (msg) => {
-                                  if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, msg);
-                              });
-                              
-                              if (res && res.master_brief) {
-                                  let parsedData = null;
-                                  if (typeof res.master_brief === 'object' && res.master_brief !== null) {
-                                      parsedData = res.master_brief;
-                                  } else if (typeof res.master_brief === 'string') {
-                                      try {
-                                          // Remove potential markdown JSON code block markers before parsing
-                                          let cleanJsonString = res.master_brief.trim();
-                                          if (cleanJsonString.startsWith('```json')) {
-                                              cleanJsonString = cleanJsonString.replace(/^```json/, '').replace(/```$/, '').trim();
-                                          } else if (cleanJsonString.startsWith('```')) {
-                                              cleanJsonString = cleanJsonString.replace(/^```/, '').replace(/```$/, '').trim();
-                                          }
-                                          
-                                          const parsed = JSON.parse(cleanJsonString);
-                                          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                                              parsedData = parsed;
-                                          }
-                                      } catch(e) {
-                                          // Fallback to treat as plain string
+                            let currentDocId = props.documentId;
+                            
+                            // [신규] documentId가 없는 경우 (1단계를 건너뛰고 2단계부터 시작한 경우)
+                            if (!currentDocId) {
+                                const generateId = () => {
+                                    try { return crypto.randomUUID(); } 
+                                    catch (e) { return 'project-' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36); }
+                                };
+                                
+                                const newId = generateId();
+                                const tempProjectName = ideaMode === 'guide' ? (guideAnswers.q1 || "아이디어 강화 프로젝트") : (ideaText.slice(0, 15) || "아이디어 강화 프로젝트");
+                                
+                                if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "새 프로젝트를 생성 중...");
+                                await api.saveProject(newId, tempProjectName, "N/A (Idea Only)", [], [], []);
+                                
+                                if (props.onDocumentIdGenerated) {
+                                    props.onDocumentIdGenerated(newId, tempProjectName);
+                                }
+                                currentDocId = newId;
+                            }
+
+                            if (!currentDocId) {
+                                alert("프로젝트 ID를 생성할 수 없습니다. 다시 시도해 주세요.");
+                                return;
+                            }
+                            
+                            setIsEnhancing(true);
+                            let success = false;
+                            
+                            while (!success) {
+                              try {
+                                  const initialIdeaJsonToSave = JSON.stringify({
+                                      mode: ideaMode,
+                                      guideAnswers,
+                                      ideaText
+                                  });
+                                  
+                                  let currentMasterBrief = masterBrief;
+                                  if (masterBriefData) currentMasterBrief = JSON.stringify(masterBriefData);
+                                  
+                                  // 진행 전 자동 저장
+                                  await api.saveMasterBrief(currentDocId, currentMasterBrief, initialIdeaJsonToSave);
+                                  
+                                  if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "AI가 최신 정보를 검색하며 아이디어를 고도화하고 있습니다...");
+                                  
+                                  const res = await api.enhanceIdeaStream(currentDocId, finalPrompt, props.selectedModel, (msg) => {
+                                      if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, msg);
+                                  });
+                                  
+                                  if (res && res.master_brief) {
+                                      let parsedData = null;
+                                      if (typeof res.master_brief === 'object' && res.master_brief !== null) {
+                                          parsedData = res.master_brief;
+                                      } else if (typeof res.master_brief === 'string') {
+                                          try {
+                                              let cleanJsonString = res.master_brief.trim();
+                                              if (cleanJsonString.startsWith('```json')) {
+                                                  cleanJsonString = cleanJsonString.replace(/^```json/, '').replace(/```$/, '').trim();
+                                              } else if (cleanJsonString.startsWith('```')) {
+                                                  cleanJsonString = cleanJsonString.replace(/^```/, '').replace(/```$/, '').trim();
+                                              }
+                                              const parsed = JSON.parse(cleanJsonString);
+                                              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                                  parsedData = parsed;
+                                              }
+                                          } catch(e) { }
                                       }
-                                  }
 
-                                  if (parsedData) {
-                                      setMasterBriefData(parsedData);
-                                      setMasterBrief('');
+                                      if (parsedData) {
+                                          setMasterBriefData(parsedData);
+                                          setMasterBrief('');
+                                      } else {
+                                          setMasterBrief(res.master_brief);
+                                          setMasterBriefData(null);
+                                      }
+                                      success = true;
                                   } else {
-                                      setMasterBrief(res.master_brief);
-                                      setMasterBriefData(null);
+                                      // 결과가 없지만 에러는 아닌 경우 루프 탈출
+                                      success = true; 
                                   }
+                              } catch (err) {
+                                  console.error("[Workflow] enhanceIdeaStream failed:", err);
+                                  const modelName = props.selectedModel.split('/').pop() || props.selectedModel;
+                                  
+                                  if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
+                                  
+                                  const retryDecision = await new Promise<boolean>((resolve) => {
+                                      setRetryModalConfig({ isOpen: true, modelName, resolve });
+                                  });
+                                  
+                                  setRetryModalConfig(null);
+                                  if (!retryDecision) {
+                                      success = true; // 취소 시 루프 탈출
+                                  }
+                                  // else loop continues for retry
                               }
-                              success = true;
-                          } catch (err) {
-                              console.error("[Workflow] enhanceIdeaStream failed:", err);
-                              const modelToUse = props.selectedModel;
-                              const modelName = modelToUse.split('/').pop() || modelToUse;
-                              
-                              if (props.onEnhanceStateChange) {
-                                  props.onEnhanceStateChange(false);
-                              }
-                              
-                              const retryDecision = await new Promise<boolean>((resolve) => {
-                                  setRetryModalConfig({ isOpen: true, modelName, resolve });
-                              });
-                              
-                              setRetryModalConfig(null);
-                              
-                              if (!retryDecision) {
-                                  break; // 취소
-                              }
-                              // 재시작 시 루프가 계속됨
-                          }
+                            }
+                            
+                            setIsEnhancing(false);
+                            if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
+                        } catch (globalErr) {
+                            console.error("Global error in Enhance Idea:", globalErr);
+                            alert("작업 중 오류가 발생했습니다: " + globalErr);
+                            setIsEnhancing(false);
+                            if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
                         }
-                        
-                        setIsEnhancing(false);
-                        if (props.onEnhanceStateChange) props.onEnhanceStateChange(false);
                     }}
-                    disabled={isEnhancing || (ideaMode === 'guide' ? !guideAnswers.q1.trim() : !ideaText.trim())}
+                    disabled={isEnhancing}
                     className="mt-4 w-full py-4 bg-primary text-white text-sm font-bold rounded-xl shadow-lg hover:shadow-xl hover:bg-primary/90 disabled:opacity-50 disabled:hover:shadow-none flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
                 >
                     {isEnhancing ? (
@@ -1174,12 +1202,29 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             
                             <button 
                                 onClick={async () => {
-                                    if (!props.documentId) return;
+                                    let currentDocId = props.documentId;
+                                    
+                                    if (!currentDocId) {
+                                        const newId = crypto.randomUUID();
+                                        const tempProjectName = ideaMode === 'guide' ? (guideAnswers.q1 || "아이디어 저장 프로젝트") : (ideaText.slice(0, 15) || "아이디어 저장 프로젝트");
+                                        
+                                        try {
+                                            await api.saveProject(newId, tempProjectName, "N/A (Idea Only)", [], [], []);
+                                            if (props.onDocumentIdGenerated) {
+                                                props.onDocumentIdGenerated(newId, tempProjectName);
+                                            }
+                                            currentDocId = newId;
+                                        } catch (e) {
+                                            alert("프로젝트 생성 중 오류가 발생했습니다: " + e);
+                                            return;
+                                        }
+                                    }
+
                                     let finalMasterBriefToSave = masterBrief;
                                     if (masterBriefData) finalMasterBriefToSave = JSON.stringify(masterBriefData);
                                     const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, guideAnswers, ideaText });
                                     try {
-                                        await api.saveMasterBrief(props.documentId, finalMasterBriefToSave, initialIdeaJsonToSave);
+                                        await api.saveMasterBrief(currentDocId, finalMasterBriefToSave, initialIdeaJsonToSave);
                                         handleStepCompletion(2);
                                         alert("아이디어 마스터 브리프가 성공적으로 저장되었습니다!");
                                     } catch(err) {

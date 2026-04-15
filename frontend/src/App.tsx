@@ -35,6 +35,9 @@ function App() {
     modelName: string;
     resolve?: (retry: boolean) => void;
   } | null>(null);
+  
+  // AnalysisWorkflow의 강제 초기화를 제어하기 위한 키 (프로젝트 열기/새로 만들기 시에만 변경)
+  const [workflowKey, setWorkflowKey] = useState<string>('initial');
 
   useEffect(() => {
       loadProjects();
@@ -199,6 +202,7 @@ function App() {
       setInitialIdeaData(res.initial_idea || '');
       setSelectedNodeIds(res.selected_ids || []);
       setContentNodeIds(res.content_ids || []);
+      setWorkflowKey(documentId); // 프로젝트를 열 때 키를 변경하여 컴포넌트 초기화
       setActiveView('analysis');
     } catch (err) {
       alert("프로젝트를 불러오지 못했습니다: " + err);
@@ -265,6 +269,7 @@ function App() {
       setContentNodeIds([]);
       setSelectedFile(null);
       setIsUploading(false);
+      setWorkflowKey('reset-' + Date.now()); // 새로운 시작을 위해 키 갱신
       setActiveView('analysis');
     }
   };
@@ -282,6 +287,7 @@ function App() {
     setContentNodeIds([]);
     setSelectedFile(null);
     setIsUploading(false);
+    setWorkflowKey('new-' + Date.now()); // 새 프로젝트 작성을 위해 키 갱신
     setActiveView('analysis');
   };
 
@@ -344,7 +350,7 @@ function App() {
         {activeView === 'analysis' ? (
           <div className="block flex-1 flex-col relative">
             <AnalysisWorkflow 
-                key={currentDocumentId || 'new_project'}
+                key={workflowKey}
                 initialTreeData={treeData} 
                 initialMasterBrief={initialMasterBrief}
                 initialIdeaData={initialIdeaData}
@@ -375,6 +381,11 @@ function App() {
                     if (currentDocumentId) {
                         handleRename(currentDocumentId, newTitle);
                     }
+                }}
+                onDocumentIdGenerated={(id, name) => {
+                    setCurrentDocumentId(id);
+                    if (name) setFileName(name);
+                    loadProjects(); // 목록 갱신
                 }}
                 hasSelectedFile={!!selectedFile}
             />
