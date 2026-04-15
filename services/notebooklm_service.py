@@ -139,7 +139,7 @@ class NotebookLMService:
             print(f"[NOTEBOOKLM_SERVICE] Notebook created successfully: {notebook_id}")
             
             # 마스터 브리프 및 템플릿 파일 업로드
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp_brief:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as tmp_brief:
                 tmp_brief.write(master_brief)
                 brief_path = tmp_brief.name
             
