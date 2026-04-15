@@ -211,6 +211,8 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                    <option value="함초롬바탕">함초롬바탕</option>
                    <option value="맑은 고딕">맑은 고딕</option>
                    <option value="굴림">굴림</option>
+                   <option value="돋음체">돋음체</option>
+                   <option value="돋음">돋음</option>
                  </select>
                </div>
                <div className="flex flex-col gap-1.5">
