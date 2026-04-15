@@ -773,8 +773,8 @@ def find_and_update_node_recursive(nodes, target_id, content):
             find_and_update_node_recursive(node["children"], target_id, content)
     return nodes
 
-def prepare_tree_for_drafting(nodes):
-    """contentChecked를 content로 통일하여 NotebookLM 서비스에 전달할 트리를 준비합니다."""
+def prepare_tree_for_drafting(nodes, selected_set, content_set):
+    """현재 선택 상태(selected_set, content_set)를 기준으로 NotebookLM 서비스에 전달할 트리의 작성 여부를 제어합니다."""
     if not isinstance(nodes, list):
         return []
     result = []
@@ -782,11 +782,15 @@ def prepare_tree_for_drafting(nodes):
         if not isinstance(node, dict):
             continue
         prepared = dict(node)
-        # contentChecked 또는 content 중 하나라도 True면 content=True로 통일
-        is_content = node.get("contentChecked", False) or node.get("content", False)
+        node_id = str(node.get("id", ""))
+        
+        # 문서에 포함(checked)되고, 내용 작성 대상(contentChecked)인 경우에만 초안 작성 허용
+        is_content = (node_id in selected_set) and (node_id in content_set)
         prepared["content"] = bool(is_content)
+        prepared["contentChecked"] = bool(is_content) # 백엔드 로직 충돌 방지를 위해 동기화
+        
         if "children" in node and isinstance(node["children"], list):
-            prepared["children"] = prepare_tree_for_drafting(node["children"])
+            prepared["children"] = prepare_tree_for_drafting(node["children"], selected_set, content_set)
         result.append(prepared)
     return result
 
@@ -834,7 +838,10 @@ async def generate_draft_stream(
     raw_tree = project.parsed_tree or []
     if not raw_tree:
         raise HTTPException(status_code=400, detail="문서 구조 분석 데이터가 없습니다.")
-    document_tree = prepare_tree_for_drafting(raw_tree)
+        
+    selected_set = {str(i) for i in (project.selected_node_ids or [])}
+    content_set = {str(i) for i in (project.content_node_ids or [])}
+    document_tree = prepare_tree_for_drafting(raw_tree, selected_set, content_set)
     project_name = project.name
 
     # 백그라운드에서 상주하며 일할 코루틴 정의
