@@ -290,7 +290,7 @@ def clean_guide_tables(hwp):
             cur_list = hwp.GetPos()[0]
             
             if cur_list > 0:
-                hwp.HAction.Run("CloseEx")
+                hwp.HAction.Run("SelectCtrlReverse")
                 hwp.HAction.Run("Delete")
             else:
                 hwp.HAction.Run("MoveParaBegin")

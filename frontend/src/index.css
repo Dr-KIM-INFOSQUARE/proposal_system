@@ -1,14 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+* {
+    font-family: 'Fira Code', 'Noto Sans KR', sans-serif !important;
+}
+
 .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined' !important;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
 body {
     background-color: #f7f9fb;
     color: #191c1e;
+    font-family: 'Fira Code', 'Noto Sans KR', sans-serif;
 }
 
 /* Custom scrollbar for better look */

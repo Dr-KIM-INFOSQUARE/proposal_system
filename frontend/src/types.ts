@@ -10,6 +10,7 @@ export interface DocumentNode {
   tableMetadata?: string | null;
   content?: boolean;
   draft_content?: string | null;
+  extended_content?: string | null;
   children?: DocumentNode[];
 }
 export interface DraftGenerateRequest {

@@ -24,6 +24,8 @@ function App() {
   const [initialIdeaData, setInitialIdeaData] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<(string | number)[]>([]);
+  const [contentNodeIds, setContentNodeIds] = useState<(string | number)[]>([]);
   
   const [isEnhancing, setIsEnhancing] = useState<boolean>(false);
   const [enhanceMessage, setEnhanceMessage] = useState<string | null>(null);
@@ -145,7 +147,9 @@ function App() {
           treeData
         );
         if (treeData) setTreeData(treeData);
-        alert("프로젝트 상태가 성공적으로 저장되었습니다!");
+        setSelectedNodeIds(selectedNodeIds);
+        setContentNodeIds(contentNodeIds);
+        alert("문서 구조 분석 결과가 성공적으로 저장되었습니다!");
         loadProjects();
       } catch (err) {
         alert("저장 중 오류: " + err);
@@ -193,6 +197,8 @@ function App() {
       setPdfUrl(res.pdf_url);
       setInitialMasterBrief(res.master_brief || '');
       setInitialIdeaData(res.initial_idea || '');
+      setSelectedNodeIds(res.selected_ids || []);
+      setContentNodeIds(res.content_ids || []);
       setActiveView('analysis');
     } catch (err) {
       alert("프로젝트를 불러오지 못했습니다: " + err);
@@ -246,7 +252,7 @@ function App() {
   };
 
   const handleReset = () => {
-    if (confirm("현재 작업을 초기화하시겠습니까? 저장되지 않은 변경사항은 사라질 수 있습니다.")) {
+    if (confirm("경고! 저장되지 않은 변경사항은 사라질 수 있습니다.")) {
       setCurrentDocumentId(null);
       setTreeData([]);
       setFileName(null);
@@ -255,6 +261,8 @@ function App() {
       setPdfUrl(null);
       setInitialMasterBrief('');
       setInitialIdeaData('');
+      setSelectedNodeIds([]);
+      setContentNodeIds([]);
       setSelectedFile(null);
       setIsUploading(false);
       setActiveView('analysis');
@@ -270,6 +278,8 @@ function App() {
     setPdfUrl(null);
     setInitialMasterBrief('');
     setInitialIdeaData('');
+    setSelectedNodeIds([]);
+    setContentNodeIds([]);
     setSelectedFile(null);
     setIsUploading(false);
     setActiveView('analysis');
@@ -339,10 +349,13 @@ function App() {
                 initialMasterBrief={initialMasterBrief}
                 initialIdeaData={initialIdeaData}
                 fileName={fileName}
+                originalFileName={originalFileName}
                 fileSize={fileSize}
                 pdfUrl={pdfUrl}
                 documentId={currentDocumentId}
                 selectedModel={selectedModel}
+                selectedNodeIds={selectedNodeIds}
+                contentNodeIds={contentNodeIds}
                 onSave={handleSave} 
                 onExport={handleExport} 
                 onReanalyze={handleReanalyze}

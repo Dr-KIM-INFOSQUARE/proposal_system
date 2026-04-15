@@ -126,7 +126,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({
             </div>
             <h2 className="font-headline text-2xl lg:text-3xl font-black tracking-tight text-on-surface">내 프로젝트</h2>
           </div>
-          <p className="text-sm text-outline max-w-lg leading-relaxed">
+          <p className="text-sm text-outline max-w-xl leading-relaxed break-keep">
             저장된 사업 계획서 구조 분석 및 AI 기반 초안 작성 프로젝트 목록을 관리합니다.<br />
             각 단계별 진행 상황을 한눈에 확인하고 이어서 작업을 진행하세요.
           </p>
