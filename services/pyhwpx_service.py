@@ -103,7 +103,7 @@ def insert_text_with_hwpx_newlines(hwp, text: str, style_config: dict, context: 
             
             try:
                 hwp.set_para(LeftMargin=0, Indentation=0, AlignType=alignment, LineSpacing=line_spacing)
-                hwp.set_font(FaceName=font_name, Height=marker_font_size, Bold=False)
+                hwp.set_font(FaceName=font_name, Height=marker_font_size, Bold=False, TextColor=0)
             except: pass
             
             if marker == "[L1]":
@@ -497,22 +497,15 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
         reset_document_styles(hwp, style_config)
 
         targets = []
-        fallback_targets = []
         global_tbl_idx = 0  
-        seen_addrs = set()
 
         def collect_targets(nodes):
             nonlocal global_tbl_idx
             for node in nodes:
                 addr = node.get("node_address")
-                if addr:
-                    if addr in seen_addrs: continue
-                    seen_addrs.add(addr) 
-                    
                 is_content_target = node.get("content") is True
                 
-                # 모드에 따라 독립적인 필드만 추출 (절대 섞이지 않도록 보장)
-                content = ""
+                # 모드에 따라 데이터 추출
                 if mode == "enhanced":
                     content = node.get("extended_content") or ""
                 else:
@@ -524,19 +517,29 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                 
                 if is_content_target and content:
                     if json_type == "table":
-                        targets.append({"type": "tbl", "index": global_tbl_idx, "content": content, "title": title})
+                        tbl_idx = global_tbl_idx
+                        # 실제 XML의 표 인덱스(tbl[X])가 있으면 무조건 그걸 따름 (엇갈림 방지)
+                        if addr and "tbl[" in str(addr):
+                            match = re.search(r'tbl\[(\d+)\]', str(addr))
+                            if match: tbl_idx = int(match.group(1))
+                        targets.append({"type": "tbl", "index": tbl_idx, "content": content, "title": title})
                         global_tbl_idx += 1
-                    elif addr:
-                        match = re.search(r'(p|tbl)\[(\d+)\]', addr)
-                        if match:
-                            targets.append({"type": match.group(1), "index": int(match.group(2)), "content": content, "title": title})
                     else:
-                        fallback_targets.append({"type": "p", "content": content, "title": title})
+                        if addr and "p[" in str(addr):
+                            match = re.search(r'p\[(\d+)\]', str(addr))
+                            if match:
+                                targets.append({"type": "p", "index": int(match.group(1)), "content": content, "title": title})
+                            else:
+                                targets.append({"type": "p", "index": -1, "content": content, "title": title})
+                        else:
+                            # 주소가 null이면 -1 부여 (나중에 퍼지 스캔으로 찾음)
+                            targets.append({"type": "p", "index": -1, "content": content, "title": title})
                 
                 if "children" in node and node["children"]:
                     collect_targets(node["children"])
         
         collect_targets(tree_data)
+        # 역순 정렬: 인덱스가 -1인 항목들은 가장 나중에(리스트 맨 끝에서) 처리되므로 문서가 꼬이지 않음
         targets.sort(key=lambda x: x["index"], reverse=True)
 
         _log(f"데이터 주입 대상 선정 완료: 총 {len(targets)}개의 섹션/표")
@@ -555,38 +558,134 @@ def generate_hwpx_with_pyhwpx(document_id: str, tree_data: list, output_path: st
                 if not content: continue
                 
                 if node_type == "p":
-                    clean_keyword = re.sub(r'^([Ⅰ-Ⅹ0-9가-하\-\.\(\)]+)\s*', '', title).strip()
-                    clean_keyword = clean_keyword[:40] if clean_keyword else title[:40]
+                    print("\n==================================================")
+                    print(f"🎯 [TARGET START] 타겟 제목: '{title}' (목표 인덱스: {idx})")
                     
-                    # 1순위: 마커 형태 검색 {{제목}} - 있으면 대체
-                    marker = f"{{{{{title}}}}}"
-                    hwp.MovePos(2) 
-                    hwp.HAction.GetDefault("RepeatFind", hwp.HParameterSet.HFindReplace.HSet)
-                    hwp.HParameterSet.HFindReplace.FindString = marker
-                    hwp.HParameterSet.HFindReplace.IgnoreMessage = 1
-                    hwp.HParameterSet.HFindReplace.Direction = 1 
+                    if not content or content.strip() == "":
+                        print("   [SKIP] ⚠️ 주입할 내용이 비어있어 스킵합니다.")
+                        continue
+
+                    # is_target 파라미터를 추가합니다.
+                    def get_fuzzy_string(s, is_target=False):
+                        if not s: return ""
+                        s = str(s).strip()
+                        
+                        if is_target:
+                            # 🚨 핵심: 타겟 제목 맨 앞에 붙은 o, ㅇ, □ 등의 기호를 먼저 날려버림
+                            s = re.sub(r'^([oㅇO○●□■▪⁃\*·\-•※]+)\s*', '', s)
+                            
+                        # HWP 특수문자 코드 제거 후 뼈대 문자만 추출
+                        s = re.sub(r'&#[0-9]+;', '', s)
+                        return re.sub(r'[^가-힣A-Za-z0-9]', '', s)
                     
-                    if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
-                        hwp.HAction.Run("Delete")
-                        insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
-                    else:
-                        # 2순위: 제목 검색
-                        hwp.MovePos(2)
-                        hwp.HParameterSet.HFindReplace.FindString = clean_keyword
-                        if hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
+                    # JSON에서 온 title을 변환할 때만 is_target=True를 줍니다.
+                    target_fuzzy = get_fuzzy_string(title, is_target=True)
+                    print(f"   [FUZZY KEY] 타겟 뼈대 문자열: '{target_fuzzy}'")
+                    
+                    target_fuzzy = get_fuzzy_string(title)
+                    print(f"   [FUZZY KEY] 타겟 뼈대 문자열: '{target_fuzzy}'")
+                    
+                    target_found = False
+                    
+                    # -----------------------------------------------------
+                    # [STEP 1] 인덱스가 유효한(0 이상) 경우만 다이렉트 접근 시도
+                    # -----------------------------------------------------
+                    if idx >= 0:
+                        try:
+                            hwp.SetPos(0, idx, 0)
+                            hwp.HAction.Run("MoveParaBegin")
+                            hwp.HAction.Run("MoveSelParaEnd")
+                            idx_text = hwp.GetTextFile("TEXT", "saveblock")
                             hwp.HAction.Run("Cancel")
-                            hwp.HAction.Run("MoveParaEnd")
-                            hwp.HAction.Run("BreakPara")
-                            # 새 줄을 만든 후 주입 (기존 내용과의 혼입 방지를 위해 Open 시점의 템플릿 신뢰)
-                            insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
-                        else:
-                            # 3순위: 강제 주입
+                            
+                            idx_text_str = idx_text[1] if isinstance(idx_text, tuple) and len(idx_text)>1 else str(idx_text or "")
+                            current_fuzzy = get_fuzzy_string(idx_text_str)
+                            
+                            is_match = False
+                            if target_fuzzy == current_fuzzy:
+                                is_match = True
+                            elif target_fuzzy and current_fuzzy.endswith(target_fuzzy):
+                                if len(current_fuzzy) - len(target_fuzzy) <= 5: 
+                                    is_match = True
+                                    
+                            if is_match:
+                                print(f"   ✅ [STEP 1 성공] 인덱스 매칭 확정!")
+                                hwp.HAction.Run("MoveParaEnd")
+                                hwp.HAction.Run("BreakPara")
+                                insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
+                                target_found = True
+                            else:
+                                print(f"   ❌ [STEP 1 실패] 텍스트 불일치 (현재: '{current_fuzzy}')")
+                        except Exception as e:
+                            print(f"   🚨 [STEP 1 에러] {e}")
+
+                    # -----------------------------------------------------
+                    # [STEP 2] 하이브리드 고속 탐색 (인덱스 -1 이거나 매칭 실패 시)
+                    # -----------------------------------------------------
+                    if not target_found and len(target_fuzzy) >= 2:
+                        print(f"   ▶ [STEP 2] 네이티브 고속 스캔 시작...")
+                        hwp.MovePos(2) # 문서 처음으로 이동
+                        
+                        # HWP 네이티브 검색용 키워드 추출 (기호 떼고 앞부분 최대 5글자)
+                        clean_title = re.sub(r'^([oㅇO○●□■▪⁃\*·\-•※]+)\s*', '', title).strip()
+                        search_keyword = clean_title[:5] if len(clean_title) >= 5 else clean_title
+                        
+                        hwp.HAction.GetDefault("RepeatFind", hwp.HParameterSet.HFindReplace.HSet)
+                        hwp.HParameterSet.HFindReplace.FindString = search_keyword
+                        hwp.HParameterSet.HFindReplace.IgnoreMessage = 1
+                        hwp.HParameterSet.HFindReplace.Direction = 1 # 아래로 탐색
+                        
+                        master_loop = 0
+                        # search_keyword가 포함된 곳으로만 초고속 점프
+                        while hwp.HAction.Execute("RepeatFind", hwp.HParameterSet.HFindReplace.HSet):
+                            master_loop += 1
+                            if master_loop > 100: # 한 키워드가 100번 이상 반복될 리 없으므로 무한루프 방어
+                                break
+                            
+                            hwp.HAction.Run("MoveParaBegin")
+                            hwp.HAction.Run("MoveSelParaEnd")
+                            para_text = hwp.GetTextFile("TEXT", "saveblock")
+                            hwp.HAction.Run("Cancel")
+                            
+                            p_str = para_text[1] if isinstance(para_text, tuple) and len(para_text)>1 else str(para_text or "")
+                            current_fuzzy = get_fuzzy_string(p_str)
+                            
+                            # 퍼지(Fuzzy) 검증
+                            is_match = False
+                            if target_fuzzy == current_fuzzy:
+                                is_match = True
+                            elif len(target_fuzzy) >= 4 and target_fuzzy in current_fuzzy:
+                                is_match = True
+                            elif current_fuzzy.endswith(target_fuzzy) or current_fuzzy.startswith(target_fuzzy):
+                                if abs(len(current_fuzzy) - len(target_fuzzy)) <= 10: 
+                                    is_match = True
+                                    
+                            if is_match:
+                                print(f"   ✅ [STEP 2 성공] 고속 스캔으로 '{title}' 위치 복구 완료!")
+                                hwp.HAction.Run("MoveParaEnd")
+                                hwp.HAction.Run("BreakPara")
+                                insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
+                                target_found = True
+                                break 
+                            else:
+                                # 찾았지만 타겟이 아니면, 현재 단어를 건너뛰고 다시 검색 시작
+                                hwp.HAction.Run("MoveRight")
+
+                    # -----------------------------------------------------
+                    # [STEP 3] 강제 주입 (최후의 보루)
+                    # -----------------------------------------------------
+                    if not target_found:
+                        if idx >= 0:
+                            print(f"   ▶ [STEP 3] ⚠️ 인덱스({idx}) 위치에 강제 주입합니다.")
                             try:
                                 hwp.SetPos(0, idx, 0)
                                 hwp.HAction.Run("MoveParaEnd")
                                 hwp.HAction.Run("BreakPara")
                                 insert_text_with_hwpx_newlines(hwp, content, style_config, context="paragraph")
                             except: pass
+                        else:
+                            print(f"   🚨 [FAIL] 주소가 없고 스캔도 실패하여 주입을 포기합니다.")
+                    print("==================================================\n")
                     
                 elif node_type == "tbl":
                     print(f"[PYHWPX] 📊 표 주입 시도: {idx}번째 표 (제목: {title})")

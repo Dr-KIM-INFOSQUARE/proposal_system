@@ -48,7 +48,7 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
   });
 
   const [tableBaseStyle, setTableBaseStyle] = useState<BaseStyle>({
-    font_family: '맑은 고딕',
+    font_family: '휴먼명조',
     line_spacing: 130,
     alignment: 'Left'
   });
@@ -211,8 +211,8 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                    <option value="함초롬바탕">함초롬바탕</option>
                    <option value="맑은 고딕">맑은 고딕</option>
                    <option value="굴림">굴림</option>
-                   <option value="돋음체">돋음체</option>
-                   <option value="돋음">돋음</option>
+                   <option value="돋움체">돋움체</option>
+                   <option value="돋움">돋움</option>
                  </select>
                </div>
                <div className="flex flex-col gap-1.5">

@@ -1912,11 +1912,9 @@ const AccordionSection: React.FC<AccordionSectionProps> = ({ number, title, isOp
         </span>
       </div>
       
-      {isOpen && (
-        <div className="border-t border-outline-variant/5">
-          {children}
-        </div>
-      )}
+      <div className={`border-t border-outline-variant/5 ${isOpen ? 'block' : 'hidden'}`}>
+        {children}
+      </div>
     </div>
   );
 };

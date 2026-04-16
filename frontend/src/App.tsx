@@ -165,15 +165,21 @@ function App() {
          return;
      }
       try {
-         // 자동 저장 실행
-         await api.saveProject(
-           currentDocumentId, 
-           fileName || "Untitled Project", 
-           originalFileName || "Unknown Document",
-           selectedNodeIds, 
-           contentNodeIds,
-           treeData
-         );
+         // 추출 시 자동 저장 전에 선택된 항목 유무를 확인. 
+         // 트리 데이터는 있는데 체킹된게 없다면 의도치 않은 데이터 삭제를 방지하기 위해 저장을 스킵.
+         if (selectedNodeIds.length === 0 && treeData && treeData.length > 0) {
+            console.warn("[Workflow] Skipping auto-save in Export: No nodes selected. To protect existing data.");
+         } else {
+             // 자동 저장 실행
+             await api.saveProject(
+               currentDocumentId, 
+               fileName || "Untitled Project", 
+               originalFileName || "Unknown Document",
+               selectedNodeIds, 
+               contentNodeIds,
+               treeData
+             );
+         }
  
          const res = await api.exportProject(currentDocumentId);
         const blob = new Blob([JSON.stringify(res, null, 2)], { type: "application/json" });

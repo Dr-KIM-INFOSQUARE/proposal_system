@@ -130,35 +130,48 @@ def _apply_address_to_ai_nodes(ai_nodes: list, base_nodes: list):
     def get_similarity(s1, s2):
         return difflib.SequenceMatcher(None, s1.strip(), s2.strip()).ratio()
 
-    # 1. base_nodes에서 표(table) 주소만 순서대로 추출해 둔 큐(Queue) 생성
+    # 1. 표 주소는 순서대로 빼기 위해 리스트업
     base_table_addresses = [
         b_node["node_address"] for b_node in base_nodes 
         if b_node.get("node_address") and "tbl[" in b_node["node_address"]
     ]
 
+    # 🚨 추가된 핵심 로직: 이미 짝이 지어진 문단(p) 주소를 저장하는 바구니
+    used_p_addresses = set()
+
     def find_best_base_node(target_title, pool):
         best_match = None
         highest_score = 0.0
+        
         for b_node in pool:
-            # 표가 아닌 일반 문단(p) 노드들만 유사도 검사
-            if b_node.get("node_address") and "tbl[" in b_node["node_address"]:
+            addr = b_node.get("node_address")
+            
+            # 표(tbl) 주소이거나, 🚨이미 다른 노드에게 배정된 주소라면 검사하지 않고 패스!
+            if (addr and "tbl[" in addr) or (addr in used_p_addresses):
                 continue
+                
             score = get_similarity(target_title, b_node["title"])
             if score > highest_score:
                 highest_score = score
                 best_match = b_node
-        return best_match if highest_score > 0.7 else None
+                
+        # 70% 이상 유사해서 짝꿍으로 확정되었다면?
+        if best_match and highest_score > 0.7:
+            # 🚨 "이 주소는 품절되었습니다" 하고 블랙리스트에 등록
+            used_p_addresses.add(best_match["node_address"])
+            return best_match
+            
+        return None
 
     def process_recursive(curr_ai_nodes):
         for ai_node in curr_ai_nodes:
-            # [A] 표(table) 노드인 경우: 순서대로 주소 할당
+            # [A] 표(table) 노드인 경우
             if ai_node.get("type") == "table":
                 if base_table_addresses:
-                    # 앞에서부터 순서대로 표 주소를 꺼내서 매핑
                     ai_node["node_address"] = base_table_addresses.pop(0)
                 else:
                     ai_node["node_address"] = None
-            # [B] 일반 노드인 경우: 기존처럼 제목 유사도로 매핑
+            # [B] 일반 노드인 경우
             else:
                 match = find_best_base_node(ai_node["title"], base_nodes)
                 if match:
