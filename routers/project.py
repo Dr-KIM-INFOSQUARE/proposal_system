@@ -106,10 +106,11 @@ class DraftingManager:
             if q in self.queues[document_id]:
                 self.queues[document_id].remove(q)
 
-# 전역 매니저 인스턴스
+# 전역 매니저 및 락 인스턴스
 drafting_manager = DraftingManager()
 enhancement_manager = DraftingManager() 
 hwpx_manager = DraftingManager() # HWPX 생성 전용 매니저 추가
+hwpx_global_lock = asyncio.Lock() # HWPX는 COM 객체를 사용하므로 다중 사용자 충돌 방지를 위해 전역 락 사용
 
 def log_usage(document_id: str, model_id: str, usage: dict, db: Session, task_type: str = "analysis"):
     """토큰 사용량을 계산하고 DB에 기록합니다."""
@@ -1000,31 +1001,37 @@ async def generate_hwpx_custom(request: HwpxGenerateRequest, db: Session = Depen
     async def run_hwpx_gen():
         try:
             print(f"[HWPX] Starting generation task for {document_id}")
-            await hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": "[PYHWPX] HWPX 엔진 초기화 중..."}, ensure_ascii=False))
             
-            def progress_callback(msg):
-                try:
-                    # 터미널과 동일한 느낌을 위해 [PYHWPX] 접두사 추가
-                    full_msg = f"[PYHWPX] {msg}"
-                    asyncio.run_coroutine_threadsafe(
-                        hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": full_msg}, ensure_ascii=False)),
-                        main_loop
+            # 사용자에게 대기열 진행 상태를 먼저 알림
+            await hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": "[PYHWPX] 서버 HWP 엔진 가용 자원을 획득 대기 중입니다 (대기열 등재)..."}, ensure_ascii=False))
+            
+            # 전역 락을 획득하여 한 번에 하나의 HWPX 파일만 생성되도록 보장 (COM 객체 충돌 방지)
+            async with hwpx_global_lock:
+                await hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": "[PYHWPX] HWPX 엔진 초기화 중..."}, ensure_ascii=False))
+                
+                def progress_callback(msg):
+                    try:
+                        # 터미널과 동일한 느낌을 위해 [PYHWPX] 접두사 추가
+                        full_msg = f"[PYHWPX] {msg}"
+                        asyncio.run_coroutine_threadsafe(
+                            hwpx_manager.broadcast(document_id, json.dumps({"status": "progress", "message": full_msg}, ensure_ascii=False)),
+                            main_loop
+                        )
+                    except Exception as e:
+                        print(f"[HWPX] Callback Error: {e}")
+    
+                # PyHWPX 작업은 별도 스레드에서 수행 (COM 초기화 필요성 때문)
+                success = await main_loop.run_in_executor(
+                    None, 
+                    lambda: generate_hwpx_with_pyhwpx(
+                        document_id, 
+                        tree_data, 
+                        output_path, 
+                        style_config=style_config, 
+                        mode=mode,
+                        on_progress=progress_callback
                     )
-                except Exception as e:
-                    print(f"[HWPX] Callback Error: {e}")
-
-            # PyHWPX 작업은 별도 스레드에서 수행 (COM 초기화 필요성 때문)
-            success = await main_loop.run_in_executor(
-                None, 
-                lambda: generate_hwpx_with_pyhwpx(
-                    document_id, 
-                    tree_data, 
-                    output_path, 
-                    style_config=style_config, 
-                    mode=mode,
-                    on_progress=progress_callback
                 )
-            )
 
             if success:
                 display_name = f"{project.name}_고도화_최종.hwpx" if mode == "enhanced" else f"{project.name}_초안_최종.hwpx"

@@ -1,16 +1,26 @@
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, event
 from sqlalchemy.orm import declarative_base, sessionmaker
+import datetime
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./planweaver.db"
 
+# 타임아웃을 30초로 설정하여 혼잡 시 대기 시간을 늘림
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False, "timeout": 30}
 )
+
+# 동시성 문제(Database is locked)를 해결하기 위해 WAL(Write-Ahead Logging) 모드 강제 적용
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000") # 30초
+    cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
-
-import datetime
 
 def get_kst_time():
     """한국 표준시(KST) 시간을 반환합니다."""
