@@ -113,7 +113,8 @@ class NotebookLMService:
         document_tree: List[Dict[str, Any]], 
         pdf_path: Optional[str] = None, 
         research_mode: str = "deep", 
-        project_name: Optional[str] = None
+        project_name: Optional[str] = None,
+        reference_files: Optional[List[str]] = None
     ) -> AsyncGenerator[str, None]:
 
         """5단계 파이프라인을 스트리밍 방식으로 실행합니다. (항상 처음부터 시작)"""
@@ -150,6 +151,18 @@ class NotebookLMService:
                 if pdf_path and os.path.exists(pdf_path):
                     print(f"[NOTEBOOKLM_SERVICE] Adding source: Template PDF")
                     await self._run_command(["source", "add", notebook_id, "--file", pdf_path, "--wait"])
+                
+                # 참고 자료 파일들을 소스로 추가
+                if reference_files:
+                    for idx, ref_path in enumerate(reference_files):
+                        if os.path.exists(ref_path):
+                            ref_name = os.path.basename(ref_path)
+                            print(f"[NOTEBOOKLM_SERVICE] Adding reference source ({idx+1}/{len(reference_files)}): {ref_name}")
+                            yield json.dumps({"phase": 1, "status": f"Phase 1: 참고 자료 업로드 중 ({idx+1}/{len(reference_files)}): {ref_name}"})
+                            try:
+                                await self._run_command(["source", "add", notebook_id, "--file", ref_path, "--wait"])
+                            except Exception as ref_err:
+                                print(f"[NOTEBOOKLM_SERVICE] Warning: Failed to add reference '{ref_name}': {ref_err}")
             finally:
                 if os.path.exists(brief_path):
                     os.remove(brief_path)

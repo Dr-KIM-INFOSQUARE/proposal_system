@@ -293,9 +293,12 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
   const [ideaMode, setIdeaMode] = useState<'guide' | 'free'>('guide');
   const [guideAnswers, setGuideAnswers] = useState({
-    q1: '', q2: '', q3: '', q4: '', q5: ''
+    q1: '', q2: '', q3: '', q4: '', q5: '', q6: ''
   });
   const [ideaText, setIdeaText] = useState('');
+  const [referenceFiles, setReferenceFiles] = useState<{name: string, size: number, uploaded_at: string}[]>([]);
+  const [isUploadingRef, setIsUploadingRef] = useState(false);
+  const refFileInputRef = React.useRef<HTMLInputElement>(null);
   const [masterBrief, setMasterBrief] = useState('');
   const [masterBriefData, setMasterBriefData] = useState<any>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -688,30 +691,43 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           try {
               const parsed = JSON.parse(props.initialIdeaData);
               if (parsed.mode) setIdeaMode(parsed.mode);
-              if (parsed.guideAnswers) setGuideAnswers(parsed.guideAnswers);
+              if (parsed.guideAnswers) {
+                  setGuideAnswers(prev => ({...prev, ...parsed.guideAnswers}));
+              }
               if (parsed.ideaText) setIdeaText(parsed.ideaText);
           } catch (e) {
               console.error("Failed to parse initialIdeaData", e);
           }
       } else {
           setIdeaMode('guide');
-          setGuideAnswers({ q1: '', q2: '', q3: '', q4: '', q5: '' });
+          setGuideAnswers({ q1: '', q2: '', q3: '', q4: '', q5: '', q6: '' });
           setIdeaText('');
       }
   }, [props.initialIdeaData]);
 
+  // 참고 자료 파일 목록 로드
+  useEffect(() => {
+      if (props.documentId) {
+          api.getReferenceFiles(props.documentId).then(res => {
+              setReferenceFiles(res.files || []);
+          }).catch(err => {
+              console.error("Failed to load reference files", err);
+          });
+      } else {
+          setReferenceFiles([]);
+      }
+  }, [props.documentId]);
+
   // 텍스트 영역 자동 높이 조절
   useEffect(() => {
-     if (masterBriefData || masterBrief) {
-        setTimeout(() => {
-           const textareas = document.querySelectorAll('textarea.auto-resize');
-           textareas.forEach((el: any) => {
-              el.style.height = 'auto';
-              el.style.height = el.scrollHeight + 'px';
-           });
-        }, 10);
-     }
-  }, [masterBriefData, masterBrief]);
+     setTimeout(() => {
+        const textareas = document.querySelectorAll('textarea.auto-resize');
+        textareas.forEach((el: any) => {
+           el.style.height = 'auto';
+           el.style.height = el.scrollHeight + 'px';
+        });
+     }, 100);
+  }, [masterBriefData, masterBrief, guideAnswers, ideaText, activeIdeaTab, ideaMode, activeStep]);
 
   // HWPX 로그 자동 스크롤
   useEffect(() => {
@@ -936,23 +952,112 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                       <div className="space-y-4">
                          <div className="flex flex-col gap-1.5">
                             <label className="text-sm font-bold text-on-surface">1. 아이템 한 줄 요약 <span className="text-error">*</span></label>
-                            <textarea value={guideAnswers.q1} onChange={(e) => setGuideAnswers(p => ({...p, q1: e.target.value}))} disabled={isEnhancing} placeholder="예: AI 기반 중고거래 사기 방지 앱" className="min-h-[50px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q1} onChange={(e) => setGuideAnswers(p => ({...p, q1: e.target.value}))} disabled={isEnhancing} placeholder="예: AI 기반 중고거래 사기 방지 앱" className="auto-resize min-h-[50px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
                             <label className="text-sm font-bold text-on-surface">2. 해결하려는 문제점</label>
-                            <textarea value={guideAnswers.q2} onChange={(e) => setGuideAnswers(p => ({...p, q2: e.target.value}))} disabled={isEnhancing} placeholder="예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화" className="min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q2} onChange={(e) => setGuideAnswers(p => ({...p, q2: e.target.value}))} disabled={isEnhancing} placeholder="예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
                             <label className="text-sm font-bold text-on-surface">3. 핵심 기술 및 차별성</label>
-                            <textarea value={guideAnswers.q3} onChange={(e) => setGuideAnswers(p => ({...p, q3: e.target.value}))} disabled={isEnhancing} placeholder="예: 실시간 계좌 검증 및 대화 내역 NLP 분석" className="min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q3} onChange={(e) => setGuideAnswers(p => ({...p, q3: e.target.value}))} disabled={isEnhancing} placeholder="예: 실시간 계좌 검증 및 대화 내역 NLP 분석" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
                             <label className="text-sm font-bold text-on-surface">4. 타겟 고객 및 시장</label>
-                            <textarea value={guideAnswers.q4} onChange={(e) => setGuideAnswers(p => ({...p, q4: e.target.value}))} disabled={isEnhancing} placeholder="예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자" className="min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q4} onChange={(e) => setGuideAnswers(p => ({...p, q4: e.target.value}))} disabled={isEnhancing} placeholder="예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
                             <label className="text-sm font-bold text-on-surface">5. 기대 효과</label>
-                            <textarea value={guideAnswers.q5} onChange={(e) => setGuideAnswers(p => ({...p, q5: e.target.value}))} disabled={isEnhancing} placeholder="예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산" className="min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q5} onChange={(e) => setGuideAnswers(p => ({...p, q5: e.target.value}))} disabled={isEnhancing} placeholder="예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                         </div>
+
+                         {/* 6. 기타 참고 자료 */}
+                         <div className="flex flex-col gap-1.5 pt-2 border-t border-outline-variant/20">
+                            <label className="text-sm font-bold text-on-surface flex items-center gap-2">
+                              6. 기타 참고 자료
+                              <span className="text-[10px] font-normal text-outline bg-surface-container-high px-2 py-0.5 rounded-full">선택사항</span>
+                            </label>
+                            <p className="text-[11px] text-outline -mt-1">컨소시엄 역량, 보유 특허/인증, 핵심 기술력 등 AI가 참고할 추가 정보를 자유롭게 입력하세요.</p>
+                            <textarea value={guideAnswers.q6} onChange={(e) => setGuideAnswers(p => ({...p, q6: e.target.value}))} disabled={isEnhancing} placeholder="예: 주관기관 (주)비전아이티 - AI/빅데이터 전문기업, 특허 3건 보유 (영상인식 기반 이상탐지 등)\n참여기관 (주)가시 - 블록체인 보안 전문기업, ISO 27001 인증" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+
+                            {/* 파일 첨부 영역 */}
+                            <div className="mt-1">
+                              <p className="text-[11px] text-outline mb-1.5 flex items-center gap-1">
+                                <span className="material-symbols-outlined text-xs">attach_file</span>
+                                참고 파일 첨부 <span className="text-primary font-medium">(초안 작성 시 NotebookLM 소스로 자동 추가됩니다)</span>
+                              </p>
+                              <input
+                                ref={refFileInputRef}
+                                type="file"
+                                multiple
+                                accept=".pdf,.txt,.md,.docx,.hwpx,.hwp,.pptx,.xlsx,.csv,.json"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const files = Array.from(e.target.files || []);
+                                  if (files.length === 0) return;
+                                  
+                                  let docId = props.documentId;
+                                  if (!docId) {
+                                    alert("먼저 아이디어 고도화를 1회 이상 실행하거나, 프로젝트를 생성해 주세요.");
+                                    e.target.value = '';
+                                    return;
+                                  }
+                                  
+                                  setIsUploadingRef(true);
+                                  try {
+                                    const res = await api.uploadReferenceFiles(docId, files);
+                                    setReferenceFiles(prev => [...prev, ...res.files]);
+                                  } catch (err) {
+                                    alert("파일 업로드 중 오류: " + err);
+                                  } finally {
+                                    setIsUploadingRef(false);
+                                    e.target.value = '';
+                                  }
+                                }}
+                              />
+                              <button
+                                onClick={() => refFileInputRef.current?.click()}
+                                disabled={isEnhancing || isUploadingRef}
+                                className="w-full border-2 border-dashed border-outline-variant/40 rounded-lg p-3 text-xs text-outline hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                              >
+                                {isUploadingRef ? (
+                                  <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> 업로드 중...</>
+                                ) : (
+                                  <><span className="material-symbols-outlined text-sm">cloud_upload</span> 파일 선택 또는 여기를 클릭 (PDF, DOCX, HWPX 등)</>
+                                )}
+                              </button>
+
+                              {/* 업로드된 파일 목록 */}
+                              {referenceFiles.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {referenceFiles.map((f, idx) => (
+                                    <div key={idx} className="flex items-center justify-between bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-3 py-1.5 text-xs group">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="material-symbols-outlined text-sm text-outline">description</span>
+                                        <span className="truncate text-on-surface font-medium">{f.name}</span>
+                                        <span className="text-outline shrink-0">({(f.size / 1024).toFixed(0)} KB)</span>
+                                      </div>
+                                      <button
+                                        onClick={async () => {
+                                          if (!props.documentId) return;
+                                          try {
+                                            await api.deleteReferenceFile(props.documentId, f.name);
+                                            setReferenceFiles(prev => prev.filter((_, i) => i !== idx));
+                                          } catch (err) {
+                                            alert("삭제 실패: " + err);
+                                          }
+                                        }}
+                                        disabled={isEnhancing}
+                                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-outline hover:text-red-500 transition-all"
+                                        title="파일 삭제"
+                                      >
+                                        <span className="material-symbols-outlined text-sm">close</span>
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                          </div>
                       </div>
                    ) : (
@@ -961,7 +1066,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             value={ideaText}
                             onChange={(e) => setIdeaText(e.target.value)}
                             placeholder="생각나시는 사업 아이템, 타겟 고객, 해결하려는 문제점 등을 자유롭게 구서나 복사해서 붙여넣어 주세요."
-                            className="flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-none focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed custom-scrollbar"
+                            className="auto-resize flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed custom-scrollbar"
                             disabled={isEnhancing}
                         />
                       ) : (
@@ -978,7 +1083,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             let finalPrompt = '';
                             if (ideaMode === 'guide') {
                                if (!guideAnswers.q1.trim()) return alert("1번 '아이템 한 줄 요약'은 필수입니다.");
-                               finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}`;
+                               finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}${guideAnswers.q6.trim() ? `\n6. 기타 참고 자료: ${guideAnswers.q6.trim()}` : ''}`;
                             } else {
                                if (!ideaText.trim()) return alert("자유 입력 모드에 내용을 입력해주세요.");
                                finalPrompt = ideaText.trim();
@@ -1341,7 +1446,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                <span className={`material-symbols-outlined text-2xl ${researchMode === 'fast' ? 'text-primary' : 'text-outline'}`}>bolt</span>
                                <div className="text-center">
                                   <div className={`text-xs font-black ${researchMode === 'fast' ? 'text-primary' : 'text-on-surface'}`}>FAST</div>
-                                  <div className="text-[10px] text-outline mt-0.5">속도 중시 (~2분)</div>
+                                  <div className="text-[10px] text-outline mt-0.5">속도 중시</div>
                                </div>
                             </button>
                             <button 
@@ -1351,7 +1456,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                <span className={`material-symbols-outlined text-2xl ${researchMode === 'deep' ? 'text-primary' : 'text-outline'}`}>search_insights</span>
                                <div className="text-center">
                                   <div className={`text-xs font-black ${researchMode === 'deep' ? 'text-primary' : 'text-on-surface'}`}>DEEP</div>
-                                  <div className="text-[10px] text-outline mt-0.5">품질 중시 (~7분)</div>
+                                  <div className="text-[10px] text-outline mt-0.5">품질 중시</div>
                                </div>
                             </button>
                          </div>

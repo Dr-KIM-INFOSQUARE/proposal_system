@@ -99,7 +99,7 @@ export const TreeNode: React.FC<TreeNodeProps> = ({
         <div 
           onClick={() => !isEditing && setIsExpanded(!isExpanded)}
           title={node.title}
-          className={`flex-1 flex items-center justify-between gap-3 bg-white px-3 md:px-4 py-2.5 md:py-3 rounded-lg hover:bg-primary/5 transition-all cursor-pointer border-l-4 ${level === 0 ? 'border-primary shadow-sm' : 'border-outline-variant/30 hover:border-primary/50'} ${contentHover ? 'bg-primary/5 border-primary/50' : ''} ${isExpanded ? 'bg-primary-fixed/10 ring-1 ring-primary/20' : 'border border-outline-variant/10'}`}
+          className={`flex-1 min-w-0 flex items-center justify-between gap-3 bg-white px-3 md:px-4 py-2.5 md:py-3 rounded-lg hover:bg-primary/5 transition-all cursor-pointer border-l-4 ${level === 0 ? 'border-primary shadow-sm' : 'border-outline-variant/30 hover:border-primary/50'} ${contentHover ? 'bg-primary/5 border-primary/50' : ''} ${isExpanded ? 'bg-primary-fixed/10 ring-1 ring-primary/20' : 'border border-outline-variant/10'}`}
         >
           <div className="flex items-center gap-3 flex-1 min-w-0">
             {isEditing ? (

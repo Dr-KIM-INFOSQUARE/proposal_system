@@ -845,6 +845,16 @@ async def generate_draft_stream(
     document_tree = prepare_tree_for_drafting(raw_tree, selected_set, content_set)
     project_name = project.name
 
+    # 참고 자료 파일 경로 수집
+    refs_dir = os.path.join(UPLOAD_DIR, f"{document_id}_refs")
+    reference_file_paths = []
+    if os.path.isdir(refs_dir):
+        for fname in os.listdir(refs_dir):
+            fpath = os.path.join(refs_dir, fname)
+            if os.path.isfile(fpath):
+                reference_file_paths.append(fpath)
+    print(f"[BACKEND] Reference files for drafting: {len(reference_file_paths)} files")
+
     # 백그라운드에서 상주하며 일할 코루틴 정의
     async def run_drafting_task():
         from models.database import SessionLocal # 별도 세션 필요
@@ -857,7 +867,8 @@ async def generate_draft_stream(
                 document_tree=document_tree,
                 pdf_path=pdf_path,
                 research_mode=request.research_mode,
-                project_name=project_name
+                project_name=project_name,
+                reference_files=reference_file_paths
             ):
                 # 1. 메시지 전파 (모든 연결된 큐에 전송)
                 await drafting_manager.broadcast(document_id, progress)
@@ -1291,11 +1302,86 @@ async def delete_project(document_id: str, db: Session = Depends(get_db)):
                 if filename.startswith(document_id):
                     filepath = os.path.join(UPLOAD_DIR, filename)
                     try:
-                        os.remove(filepath)
-                        print(f"Removed project file: {filepath}")
+                        if os.path.isdir(filepath):
+                            shutil.rmtree(filepath)
+                            print(f"Removed project directory: {filepath}")
+                        else:
+                            os.remove(filepath)
+                            print(f"Removed project file: {filepath}")
                     except Exception as fe:
                         print(f"Failed to remove file {filepath}: {fe}")
     except Exception as e:
         print(f"Error while cleaning up project files: {e}")
             
     return {"status": "success", "message": "Project deleted successfully"}
+
+
+# === 참고 자료(Reference Files) 관리 API ===
+
+from typing import List as TypingList
+
+@router.post("/projects/{document_id}/references/upload")
+async def upload_reference_files(
+    document_id: str,
+    files: TypingList[UploadFile] = File(...),
+):
+    """프로젝트에 참고 자료 파일들을 업로드합니다."""
+    refs_dir = os.path.join(UPLOAD_DIR, f"{document_id}_refs")
+    os.makedirs(refs_dir, exist_ok=True)
+    
+    uploaded = []
+    for f in files:
+        # 파일명 충돌 방지: 동일 파일명이면 덮어쓰기
+        safe_name = f.filename.replace("/", "_").replace("\\", "_")
+        filepath = os.path.join(refs_dir, safe_name)
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(f.file, buffer)
+        
+        file_size = os.path.getsize(filepath)
+        uploaded.append({
+            "name": safe_name,
+            "size": file_size,
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        print(f"[BACKEND] Reference file uploaded: {safe_name} ({file_size} bytes)")
+    
+    return {"status": "success", "files": uploaded}
+
+
+@router.get("/projects/{document_id}/references")
+async def list_reference_files(document_id: str):
+    """프로젝트에 업로드된 참고 자료 파일 목록을 반환합니다."""
+    refs_dir = os.path.join(UPLOAD_DIR, f"{document_id}_refs")
+    
+    if not os.path.isdir(refs_dir):
+        return {"files": []}
+    
+    files = []
+    for fname in sorted(os.listdir(refs_dir)):
+        fpath = os.path.join(refs_dir, fname)
+        if os.path.isfile(fpath):
+            stat = os.stat(fpath)
+            files.append({
+                "name": fname,
+                "size": stat.st_size,
+                "uploaded_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            })
+    
+    return {"files": files}
+
+
+@router.delete("/projects/{document_id}/references/{filename}")
+async def delete_reference_file(document_id: str, filename: str):
+    """특정 참고 자료 파일을 삭제합니다."""
+    refs_dir = os.path.join(UPLOAD_DIR, f"{document_id}_refs")
+    filepath = os.path.join(refs_dir, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    try:
+        os.remove(filepath)
+        print(f"[BACKEND] Reference file deleted: {filename}")
+        return {"status": "success", "message": f"{filename} 삭제 완료"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

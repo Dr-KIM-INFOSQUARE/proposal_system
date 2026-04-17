@@ -225,20 +225,22 @@ export const HwpxFormatModal: React.FC<HwpxFormatModalProps> = ({
                    className="text-[13px] font-bold text-violet-900 border border-violet-200/60 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-400 focus:ring focus:ring-violet-400/20 py-2 px-3 bg-white hover:border-violet-300 transition-colors outline-none"
                  />
                </div>
-               <div className="flex flex-col gap-1.5">
-                 <label className="text-[11px] font-bold text-violet-800/70 pl-1 uppercase">문단 정렬</label>
-                 <select 
-                   value={currentBaseStyle.alignment}
-                   onChange={(e) => handleBaseStyleChange('alignment', e.target.value)}
-                   disabled={isGenerating}
-                   className="text-[13px] font-bold text-violet-900 border border-violet-200/60 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-400 focus:ring focus:ring-violet-400/20 py-2 pl-3 bg-white hover:border-violet-300 transition-colors cursor-pointer outline-none"
-                 >
-                   <option value="Justify">양쪽 정렬</option>
-                   <option value="Left">왼쪽 정렬</option>
-                   <option value="Center">가운데 정렬</option>
-                   <option value="Right">오른쪽 정렬</option>
-                 </select>
-               </div>
+               {activeTab === 'paragraph' && (
+                 <div className="flex flex-col gap-1.5">
+                   <label className="text-[11px] font-bold text-violet-800/70 pl-1 uppercase">문단 정렬</label>
+                   <select 
+                     value={currentBaseStyle.alignment}
+                     onChange={(e) => handleBaseStyleChange('alignment', e.target.value)}
+                     disabled={isGenerating}
+                     className="text-[13px] font-bold text-violet-900 border border-violet-200/60 rounded-xl shadow-[0_2px_6px_rgba(0,0,0,0.02)] focus:border-violet-400 focus:ring focus:ring-violet-400/20 py-2 pl-3 bg-white hover:border-violet-300 transition-colors cursor-pointer outline-none"
+                   >
+                     <option value="Justify">양쪽 정렬</option>
+                     <option value="Left">왼쪽 정렬</option>
+                     <option value="Center">가운데 정렬</option>
+                     <option value="Right">오른쪽 정렬</option>
+                   </select>
+                 </div>
+               )}
             </div>
           </div>
 

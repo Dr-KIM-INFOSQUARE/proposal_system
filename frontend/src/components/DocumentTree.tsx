@@ -1,4 +1,4 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { TreeNode } from './TreeNode';
 import type { DocumentNode } from '../types';
 import { toggleNode, toggleContentNode, updateNodeProperty, deleteNode } from '../utils/treeLogic';
@@ -34,7 +34,7 @@ export const DocumentTree = forwardRef<DocumentTreeRef, DocumentTreeProps>(({
     isAnalyzing,
     hideHeader = false,
     hideFooter = false,
-    onStepComplete
+    onStepComplete: _onStepComplete
 }, ref) => {
   const [treeData, setTreeData] = useState<DocumentNode[]>(initialTreeData);
   const [isPreviewVisible, setIsPreviewVisible] = useState(true);

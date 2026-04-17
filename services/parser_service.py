@@ -165,12 +165,13 @@ def _apply_address_to_ai_nodes(ai_nodes: list, base_nodes: list):
 
     def process_recursive(curr_ai_nodes):
         for ai_node in curr_ai_nodes:
+            # 🚨 AI 모델이 패턴 학습으로 생성한 기존 물리 주소를 먼저 초기화 (AI 환각에 의한 덮어쓰기 방지)
+            ai_node["node_address"] = None
+
             # [A] 표(table) 노드인 경우
             if ai_node.get("type") == "table":
                 if base_table_addresses:
                     ai_node["node_address"] = base_table_addresses.pop(0)
-                else:
-                    ai_node["node_address"] = None
             # [B] 일반 노드인 경우
             else:
                 match = find_best_base_node(ai_node["title"], base_nodes)
