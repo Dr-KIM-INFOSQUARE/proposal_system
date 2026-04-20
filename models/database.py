@@ -1,8 +1,13 @@
 from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, event
 from sqlalchemy.orm import declarative_base, sessionmaker
+from pathlib import Path
 import datetime
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./planweaver.db"
+# DB 파일을 data/ 폴더에서 관리 (루트 폴더 오염 방지)
+_DB_DIR = Path(__file__).parent.parent / "data"
+_DB_DIR.mkdir(exist_ok=True)  # 폴더가 없으면 자동 생성
+
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_DB_DIR / 'planweaver.db'}"
 
 # 타임아웃을 30초로 설정하여 혼잡 시 대기 시간을 늘림
 engine = create_engine(

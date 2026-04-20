@@ -35,9 +35,11 @@ ENV/
 *.env
 
 # Database & Local Storage
+data/          # DB 파일 관리 폴더 (planweaver.db, -shm, -wal)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
-planweaver.db
 uploads/
 test_files/
 

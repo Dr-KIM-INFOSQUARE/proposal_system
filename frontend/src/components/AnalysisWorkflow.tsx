@@ -328,7 +328,16 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
   // Step 2 UI States for tabs
   const [activeIdeaTab, setActiveIdeaTab] = useState<'edit' | 'preview'>('edit');
+  const [activeGuideTab, setActiveGuideTab] = useState<'edit' | 'preview'>('edit');
   const [activeMasterBriefTab, setActiveMasterBriefTab] = useState<'edit' | 'preview'>('preview');
+
+  // 가이드 항목 팝업 상태
+  const [guidePopup, setGuidePopup] = useState<{
+    field: 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
+    label: string;
+    tab: 'edit' | 'preview';
+  } | null>(null);
+  const [guidePopupValue, setGuidePopupValue] = useState('');
 
   // [신규] 초안 생성 중단 핸들러
   const handleCancelDraft = async () => {
@@ -718,13 +727,17 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
       }
   }, [props.documentId]);
 
-  // 텍스트 영역 자동 높이 조절
+  // 텍스트 영역 자동 높이 조절 (콘텐츠가 현재 높이보다 클 때만 늘림 → 수동 드래그로 키운 크기는 유지)
   useEffect(() => {
      setTimeout(() => {
         const textareas = document.querySelectorAll('textarea.auto-resize');
         textareas.forEach((el: any) => {
-           el.style.height = 'auto';
-           el.style.height = el.scrollHeight + 'px';
+           // 현재 높이를 기억한 다음 scrollHeight와 비교
+           const currentHeight = el.offsetHeight;
+           el.style.height = 'auto'; // 잠시 auto로 설정해 scrollHeight를 측정
+           const needed = el.scrollHeight;
+           // 콘텐츠가 커졌을 때만 높이 적용, 사용자가 수동으로 늘린 크기는 유지
+           el.style.height = Math.max(currentHeight, needed) + 'px';
         });
      }, 100);
   }, [masterBriefData, masterBrief, guideAnswers, ideaText, activeIdeaTab, ideaMode, activeStep]);
@@ -906,41 +919,49 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </div>
                 
                 <div className="flex flex-col gap-2">
-                   <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
-                      <button 
-                        onClick={() => setIdeaMode('guide')}
-                        className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'guide' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                      >
-                         <span className="material-symbols-outlined text-[16px]">integration_instructions</span>
-                         가이드 입력 모드
-                      </button>
-                      <button 
-                        onClick={() => setIdeaMode('free')}
-                        className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'free' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
-                      >
-                         <span className="material-symbols-outlined text-[16px]">edit_document</span>
-                         자유 입력 모드
-                      </button>
+                   <div className="flex flex-wrap items-center gap-2">
+                     {/* 모드 전환 탭 */}
+                     <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
+                        <button 
+                          onClick={() => setIdeaMode('guide')}
+                          className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'guide' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                        >
+                           <span className="material-symbols-outlined text-[16px]">integration_instructions</span>
+                           가이드 입력 모드
+                        </button>
+                        <button 
+                          onClick={() => setIdeaMode('free')}
+                          className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${ideaMode === 'free' ? 'bg-primary text-white shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                        >
+                           <span className="material-symbols-outlined text-[16px]">edit_document</span>
+                           자유 입력 모드
+                        </button>
+                     </div>
+                     
+                     {/* 편집/미리보기 토글 (가이드 모드 & 자유 모드 모두 표시) */}
+                     <div className="flex bg-surface-container-low p-1 rounded-lg self-start border border-outline-variant/20 scale-90 origin-left">
+                         <button 
+                             onClick={() => ideaMode === 'guide' ? setActiveGuideTab('edit') : setActiveIdeaTab('edit')}
+                             className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${
+                               (ideaMode === 'guide' ? activeGuideTab : activeIdeaTab) === 'edit'
+                                 ? 'bg-white text-primary shadow-sm' : 'text-outline'
+                             }`}
+                         >
+                             <span className="material-symbols-outlined text-[14px]">edit</span>
+                             편집
+                         </button>
+                         <button 
+                             onClick={() => ideaMode === 'guide' ? setActiveGuideTab('preview') : setActiveIdeaTab('preview')}
+                             className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${
+                               (ideaMode === 'guide' ? activeGuideTab : activeIdeaTab) === 'preview'
+                                 ? 'bg-white text-primary shadow-sm' : 'text-outline'
+                             }`}
+                         >
+                             <span className="material-symbols-outlined text-[14px]">visibility</span>
+                             미리보기
+                         </button>
+                     </div>
                    </div>
-                   
-                   {ideaMode === 'free' && (
-                        <div className="flex bg-surface-container-low p-1 rounded-lg self-start border border-outline-variant/20 scale-90 origin-left">
-                            <button 
-                                onClick={() => setActiveIdeaTab('edit')}
-                                className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeIdeaTab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
-                            >
-                                <span className="material-symbols-outlined text-[14px]">edit</span>
-                                편집
-                            </button>
-                            <button 
-                                onClick={() => setActiveIdeaTab('preview')}
-                                className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${activeIdeaTab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
-                            >
-                                <span className="material-symbols-outlined text-[14px]">visibility</span>
-                                미리보기
-                            </button>
-                        </div>
-                   )}
                 </div>
                 
                 <p className="text-xs text-outline mb-2">
@@ -950,35 +971,118 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
                    {ideaMode === 'guide' ? (
                       <div className="space-y-4">
+                         {/* 가이드 모드 미리보기 */}
+                         {activeGuideTab === 'preview' ? (
+                           <div className="bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-5 space-y-4">
+                             {[
+                               { key: 'q1', label: '1. 아이템 한 줄 요약', required: true },
+                               { key: 'q2', label: '2. 해결하려는 문제점', required: false },
+                               { key: 'q3', label: '3. 핵심 기술 및 차별성', required: false },
+                               { key: 'q4', label: '4. 타겟 고객 및 시장', required: false },
+                               { key: 'q5', label: '5. 기대 효과', required: false },
+                               { key: 'q6', label: '6. 기타 참고 자료', required: false },
+                             ].map(({ key, label }) => (
+                               <div key={key} className={`${key === 'q6' ? 'pt-3 border-t border-outline-variant/20' : ''}`}>
+                                 <p className="text-[11px] font-black text-primary uppercase tracking-wider mb-1">{label}</p>
+                                 {guideAnswers[key as keyof typeof guideAnswers] ? (
+                                   <MarkdownContent content={guideAnswers[key as keyof typeof guideAnswers]} />
+                                 ) : (
+                                   <p className="text-sm text-outline/50 italic">입력된 내용이 없습니다.</p>
+                                 )}
+                               </div>
+                             ))}
+                           </div>
+                         ) : (
+                           <>
                          <div className="flex flex-col gap-1.5">
-                            <label className="text-sm font-bold text-on-surface">1. 아이템 한 줄 요약 <span className="text-error">*</span></label>
-                            <textarea value={guideAnswers.q1} onChange={(e) => setGuideAnswers(p => ({...p, q1: e.target.value}))} disabled={isEnhancing} placeholder="예: AI 기반 중고거래 사기 방지 앱" className="auto-resize min-h-[50px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface">1. 아이템 한 줄 요약 <span className="text-error">*</span></label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q1', label: '1. 아이템 한 줄 요약', tab: 'edit' }); setGuidePopupValue(guideAnswers.q1); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
+                            <textarea value={guideAnswers.q1} onChange={(e) => setGuideAnswers(p => ({...p, q1: e.target.value}))} disabled={isEnhancing} placeholder="예: AI 기반 중고거래 사기 방지 앱" className="auto-resize w-full min-h-[50px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
-                            <label className="text-sm font-bold text-on-surface">2. 해결하려는 문제점</label>
-                            <textarea value={guideAnswers.q2} onChange={(e) => setGuideAnswers(p => ({...p, q2: e.target.value}))} disabled={isEnhancing} placeholder="예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface">2. 해결하려는 문제점</label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q2', label: '2. 해결하려는 문제점', tab: 'edit' }); setGuidePopupValue(guideAnswers.q2); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
+                            <textarea value={guideAnswers.q2} onChange={(e) => setGuideAnswers(p => ({...p, q2: e.target.value}))} disabled={isEnhancing} placeholder="예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
-                            <label className="text-sm font-bold text-on-surface">3. 핵심 기술 및 차별성</label>
-                            <textarea value={guideAnswers.q3} onChange={(e) => setGuideAnswers(p => ({...p, q3: e.target.value}))} disabled={isEnhancing} placeholder="예: 실시간 계좌 검증 및 대화 내역 NLP 분석" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface">3. 핵심 기술 및 차별성</label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q3', label: '3. 핵심 기술 및 차별성', tab: 'edit' }); setGuidePopupValue(guideAnswers.q3); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
+                            <textarea value={guideAnswers.q3} onChange={(e) => setGuideAnswers(p => ({...p, q3: e.target.value}))} disabled={isEnhancing} placeholder="예: 실시간 계좌 검증 및 대화 내역 NLP 분석" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
-                            <label className="text-sm font-bold text-on-surface">4. 타겟 고객 및 시장</label>
-                            <textarea value={guideAnswers.q4} onChange={(e) => setGuideAnswers(p => ({...p, q4: e.target.value}))} disabled={isEnhancing} placeholder="예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface">4. 타겟 고객 및 시장</label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q4', label: '4. 타겟 고객 및 시장', tab: 'edit' }); setGuidePopupValue(guideAnswers.q4); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
+                            <textarea value={guideAnswers.q4} onChange={(e) => setGuideAnswers(p => ({...p, q4: e.target.value}))} disabled={isEnhancing} placeholder="예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
                          <div className="flex flex-col gap-1.5">
-                            <label className="text-sm font-bold text-on-surface">5. 기대 효과</label>
-                            <textarea value={guideAnswers.q5} onChange={(e) => setGuideAnswers(p => ({...p, q5: e.target.value}))} disabled={isEnhancing} placeholder="예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface">5. 기대 효과</label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q5', label: '5. 기대 효과', tab: 'edit' }); setGuidePopupValue(guideAnswers.q5); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
+                            <textarea value={guideAnswers.q5} onChange={(e) => setGuideAnswers(p => ({...p, q5: e.target.value}))} disabled={isEnhancing} placeholder="예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
                          </div>
 
                          {/* 6. 기타 참고 자료 */}
                          <div className="flex flex-col gap-1.5 pt-2 border-t border-outline-variant/20">
-                            <label className="text-sm font-bold text-on-surface flex items-center gap-2">
-                              6. 기타 참고 자료
-                              <span className="text-[10px] font-normal text-outline bg-surface-container-high px-2 py-0.5 rounded-full">선택사항</span>
-                            </label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-on-surface flex items-center gap-2">
+                                6. 기타 참고 자료
+                                <span className="text-[10px] font-normal text-outline bg-surface-container-high px-2 py-0.5 rounded-full">선택사항</span>
+                              </label>
+                              <button
+                                onClick={() => { setGuidePopup({ field: 'q6', label: '6. 기타 참고 자료', tab: 'edit' }); setGuidePopupValue(guideAnswers.q6); }}
+                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                title="팝업으로 편집"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                확장
+                              </button>
+                            </div>
                             <p className="text-[11px] text-outline -mt-1">컨소시엄 역량, 보유 특허/인증, 핵심 기술력 등 AI가 참고할 추가 정보를 자유롭게 입력하세요.</p>
-                            <textarea value={guideAnswers.q6} onChange={(e) => setGuideAnswers(p => ({...p, q6: e.target.value}))} disabled={isEnhancing} placeholder="예: 주관기관 (주)비전아이티 - AI/빅데이터 전문기업, 특허 3건 보유 (영상인식 기반 이상탐지 등)\n참여기관 (주)가시 - 블록체인 보안 전문기업, ISO 27001 인증" className="auto-resize min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q6} onChange={(e) => setGuideAnswers(p => ({...p, q6: e.target.value}))} disabled={isEnhancing} placeholder="예: 주관기관 (주)비전아이티 - AI/빅데이터 전문기업, 특허 3건 보유 (영상인식 기반 이상탐지 등)\n참여기관 (주)가시 - 블록체인 보안 전문기업, ISO 27001 인증" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
 
                             {/* 파일 첨부 영역 */}
                             <div className="mt-1">
@@ -1059,6 +1163,8 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                               )}
                             </div>
                          </div>
+                      </>
+                         )}
                       </div>
                    ) : (
                       activeIdeaTab === 'edit' ? (
@@ -1066,11 +1172,11 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                             value={ideaText}
                             onChange={(e) => setIdeaText(e.target.value)}
                             placeholder="생각나시는 사업 아이템, 타겟 고객, 해결하려는 문제점 등을 자유롭게 구서나 복사해서 붙여넣어 주세요."
-                            className="auto-resize flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-none overflow-hidden focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed custom-scrollbar"
+                            className="flex-1 w-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed custom-scrollbar"
                             disabled={isEnhancing}
                         />
                       ) : (
-                        <div className="flex-1 w-full h-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 overflow-y-auto custom-scrollbar shadow-inner">
+                        <div className="flex-1 w-full min-h-[250px] bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-4 overflow-y-auto custom-scrollbar shadow-inner">
                            <MarkdownContent content={ideaText || '*입력된 내용이 없습니다.*'} />
                         </div>
                       )
@@ -1979,6 +2085,87 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           detectedParagraphLevels={detectedLevels.paragraph}
           detectedTableLevels={detectedLevels.table}
       />
+
+      {/* 가이드 입력 항목 팝업 모달 */}
+      {guidePopup && (
+        <div
+          className="fixed inset-0 z-[5000] flex items-center justify-center p-4 animate-fade-in"
+          style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setGuidePopup(null); }}
+        >
+          <div className="bg-surface-container-lowest rounded-3xl shadow-2xl border border-outline-variant/20 w-full max-w-2xl flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+            {/* 팝업 헤더 */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/15 bg-surface-container-low/60">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-primary text-xl">edit_note</span>
+                <h4 className="text-base font-black text-on-surface">{guidePopup.label}</h4>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* 편집/미리보기 탭 */}
+                <div className="flex bg-surface-container p-0.5 rounded-lg border border-outline-variant/20">
+                  <button
+                    onClick={() => setGuidePopup(p => p ? { ...p, tab: 'edit' } : p)}
+                    className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${guidePopup.tab === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">edit</span>
+                    편집
+                  </button>
+                  <button
+                    onClick={() => setGuidePopup(p => p ? { ...p, tab: 'preview' } : p)}
+                    className={`px-3 py-1 text-[11px] font-bold rounded flex items-center gap-1.5 transition-all ${guidePopup.tab === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-outline'}`}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">visibility</span>
+                    미리보기
+                  </button>
+                </div>
+                <button
+                  onClick={() => setGuidePopup(null)}
+                  className="p-1.5 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container-high transition-all"
+                >
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+            </div>
+            {/* 팝업 본문 */}
+            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+              {guidePopup.tab === 'edit' ? (
+                <textarea
+                  value={guidePopupValue}
+                  onChange={(e) => setGuidePopupValue(e.target.value)}
+                  disabled={isEnhancing}
+                  placeholder="내용을 입력하세요..."
+                  className="w-full min-h-[300px] bg-surface-container-low border border-outline-variant/40 rounded-xl p-4 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40 leading-relaxed"
+                  autoFocus
+                />
+              ) : (
+                <div className="min-h-[300px] bg-surface-container-low border border-outline-variant/30 rounded-xl p-5 overflow-y-auto shadow-inner">
+                  <MarkdownContent content={guidePopupValue || '*입력된 내용이 없습니다.*'} />
+                </div>
+              )}
+            </div>
+            {/* 팝업 하단 버튼 */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/15 bg-surface-container-low/40">
+              <button
+                onClick={() => setGuidePopup(null)}
+                className="px-5 py-2 text-sm font-bold text-outline bg-surface-container-high rounded-xl hover:bg-surface-container-highest transition-all border border-outline-variant/20"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  setGuideAnswers(p => ({ ...p, [guidePopup.field]: guidePopupValue }));
+                  setGuidePopup(null);
+                }}
+                disabled={isEnhancing}
+                className="px-6 py-2 text-sm font-black text-white bg-primary rounded-xl hover:bg-primary/90 transition-all shadow-md hover:shadow-lg flex items-center gap-2 disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[16px]">check</span>
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
