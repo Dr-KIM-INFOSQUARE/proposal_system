@@ -88,32 +88,59 @@ function App() {
     const modelToUse = selectedModel;
     let success = false;
     
+    // [핵심] 첫 업로드에서 확정된 document_id를 보관.
+    // 재시도 시에는 이 ID로 reanalyze-stream을 호출하여 파일 재업로드를 방지합니다.
+    let pendingDocId: string | null = null;
+    
     setIsUploading(true);
     
     while (!success) {
       try {
         setUploadMessage("준비 중...");
         
-        const res = await api.uploadDocumentStream(fileToProcess, modelToUse, (msg) => {
-          setUploadMessage(msg);
-        });
-        
-        if (res) {
-          setCurrentDocumentId(res.document_id);
-          setTreeData(res.tree || []);
-          setPdfUrl(res.pdf_url);
-          // 사용자가 이미 프로젝트 이름을 변경했으면 유지, 아니면 파일 이름 사용
-          setFileName(prev => (!prev || prev === fileToProcess.name) ? fileToProcess.name : prev);
-          setOriginalFileName(fileToProcess.name);
-          success = true;
+        if (pendingDocId) {
+          // ── 재시도: 이미 저장된 파일로 AI 분석만 다시 실행 ──────────────
+          console.log(`[App] Retrying analysis for existing document: ${pendingDocId}`);
+          const res = await api.reanalyzeProjectStream(pendingDocId, modelToUse, (msg) => {
+            setUploadMessage(msg);
+          });
+          if (res) {
+            setCurrentDocumentId(pendingDocId);
+            setTreeData(res.tree || []);
+            // PDF URL은 첫 업로드 시 이미 설정되어 있으므로 유지
+            setFileName(prev => (!prev || prev === fileToProcess.name) ? fileToProcess.name : prev);
+            setOriginalFileName(fileToProcess.name);
+            success = true;
+          }
+        } else {
+          // ── 최초 업로드: 파일 저장 + PDF 변환 + AI 분석 ─────────────────
+          const res = await api.uploadDocumentStream(fileToProcess, modelToUse, (msg, docId) => {
+            setUploadMessage(msg);
+            // received 이벤트에서 document_id를 미리 확보 (AI 분석 실패에 대비)
+            if (docId && !pendingDocId) {
+              pendingDocId = docId;
+              setCurrentDocumentId(docId);
+            }
+          });
+          
+          if (res) {
+            setCurrentDocumentId(res.document_id);
+            setTreeData(res.tree || []);
+            setPdfUrl(res.pdf_url);
+            setFileName(prev => (!prev || prev === fileToProcess.name) ? fileToProcess.name : prev);
+            setOriginalFileName(fileToProcess.name);
+            pendingDocId = res.document_id;
+            success = true;
+          }
         }
+        
         setSelectedFile(null);
         loadProjects();
       } catch (err) {
         console.error("분석 중 오류가 발생했습니다:", err);
         const modelName = modelToUse.split('/').pop() || modelToUse;
         
-        setIsUploading(false); // 잠시 로딩 풀기
+        setIsUploading(false);
         setUploadMessage(null);
         
         const retryDecision = await new Promise<boolean>((resolve) => {
@@ -123,10 +150,10 @@ function App() {
         setRetryModalConfig(null);
         
         if (!retryDecision) {
-          setSelectedFile(null); // 취소했으므로 선택 파일 해제
+          setSelectedFile(null);
           break;
         } else {
-          setIsUploading(true); // 다시 로딩 시작
+          setIsUploading(true);
         }
       }
     }
@@ -134,6 +161,7 @@ function App() {
     setIsUploading(false);
     setUploadMessage(null);
   };
+
 
   const handleSave = async (selectedNodeIds: (string | number)[], contentNodeIds: (string | number)[], treeData?: DocumentNode[]) => {
      if (!currentDocumentId) {
@@ -315,16 +343,14 @@ function App() {
       await api.deleteProject(documentId);
       await loadProjects();
       if (currentDocumentId === documentId) {
-        setCurrentDocumentId(null);
-        setTreeData([]);
-        setFileName(null);
-        setInitialMasterBrief('');
-        setInitialIdeaData('');
+        // 현재 활성화된 프로젝트를 삭제한 경우, 전체 앱 상태를 초기화합니다.
+        handleCreateNewProject();
       }
     } catch (err) {
       alert("삭제 중 오류가 발생했습니다: " + err);
     }
   };
+
 
   return (
     <div className="flex min-h-screen relative font-body text-on-surface bg-surface">

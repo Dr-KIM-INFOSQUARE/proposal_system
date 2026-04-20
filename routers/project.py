@@ -14,7 +14,7 @@ from services.parser_service import parse_document, parse_document_stream
 from models.database import get_db, Project, UsageLog
 from models.project_models import ProjectSaveRequest, ProjectRenameRequest, IdeaEnhanceRequest, IdeaSaveRequest, DraftGenerateRequest, HwpxGenerateRequest, EnhanceGenerateRequest
 from services.pdf_service import convert_hwpx_to_pdf
-from services.gemini_service import enhance_business_idea
+from services.gemini_service import enhance_business_idea_stream
 from services.notebooklm_service import notebooklm_service
 from services.pyhwpx_service import generate_hwpx_with_pyhwpx
 
@@ -212,57 +212,71 @@ async def upload_document_stream(
     model_id: str = Form("gemini-3-flash-preview"),
     db: Session = Depends(get_db)
 ):
-    """실시간 진행 상태를 보고하며 문서를 업로드하고 분석합니다."""
-    document_id = str(uuid.uuid4())
-    filename = file.filename
-    # 디렉토리 생성 및 파일 저장
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filepath = os.path.join(UPLOAD_DIR, f"{document_id}_{filename}")
+    """실시간 진행 상태를 보고하며 문서를 업로드하고 분석합니다.
     
+    [설계 원칙] 파일 저장 및 PDF 변환은 스트리밍 시작 전에 완료하여 document_id를 즉시 확정합니다.
+    AI 분석만 실패하는 경우, 이미 저장된 파일로 재분석(reanalyze-stream)을 수행하므로
+    재시도 시 파일이 중복 저장되지 않습니다.
+    """
+    filename = file.filename
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    # ── 1단계: 파일 저장 (스트리밍 전에 완료, document_id 확정) ──────────────
+    document_id = str(uuid.uuid4())
+    filepath = os.path.join(UPLOAD_DIR, f"{document_id}_{filename}")
+
     with open(filepath, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
+    # ── 2단계: PDF 변환 (스트리밍 전에 완료) ─────────────────────────────────
+    pdf_filename = f"{document_id}.pdf"
+    pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
+    try:
+        convert_hwpx_to_pdf(filepath, pdf_path)
+    except Exception as pdf_err:
+        print(f"[UPLOAD] PDF 변환 실패 (비치명적): {pdf_err}")
+
+    # ── 3단계: AI 분석 전 DB 레코드 조기 생성 (재시도 지원용) ─────────────────────
+    project = Project(
+        document_id=document_id,
+        name=filename,
+        filename=filename,
+        parsed_tree=[] 
+    )
+    db.add(project)
+    db.commit()
+
+    # ── 4단계: AI 분석 스트리밍 ──────────────────────────────────────────────
     async def event_generator():
         try:
-            # 1. 문서 접수 보고
-            yield f"data: {json.dumps({'status': 'received', 'message': '파일이 성공적으로 업로드되었습니다.', 'document_id': document_id})}\n\n"
-            await asyncio.sleep(0.5) # 체감을 위한 아주 짧은 지연
-            
-            # 2. PDF 변환 (별도 미리보기용)
-            yield f"data: {json.dumps({'status': 'preparing', 'message': '문서 미리보기를 준비하는 중 (PDF 변환)...'})}\n\n"
-            pdf_filename = f"{document_id}.pdf"
-            pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
-            convert_hwpx_to_pdf(filepath, pdf_path)
-            
-            # 3. AI 분석 스트리밍 시작
+            # 파일 저장 완료 및 document_id를 클라이언트에 즉시 전달
+            yield f"data: {json.dumps({'status': 'received', 'message': '파일이 성공적으로 업로드되었습니다.', 'document_id': document_id, 'pdf_url': f'/uploads/{pdf_filename}'})}\n\n"
+            await asyncio.sleep(0.1)
+
+            # AI 분석 스트리밍 시작
             final_data = None
             async for event in parse_document_stream(filepath, model_id=model_id):
-                # 이벤트 데이터 전송
                 yield f"data: {json.dumps(event)}\n\n"
                 if event["status"] == "completed":
                     final_data = event["data"]
-            
+
             if final_data:
-                # DB 저장 및 후처리
-                project = Project(
-                    document_id=document_id,
-                    name=filename, # 최초 생성 시 이름은 파일명과 동일하게 설정
-                    filename=filename,
-                    parsed_tree=final_data["nodes"]
-                )
-                db.add(project)
-                
-                # 사용량 로깅
-                log_usage(document_id, model_id, final_data.get("usage", {}), db, task_type="analysis")
-                db.commit()
-                
-                # 최종 완료 시그널 (클라이언트에서 상태 마무리를 위해 사용)
+                # 분석 성공 시 트리 정보 업데이트
+                # generator 내부에서 새로운 세션을 사용하는 것이 안전할 수 있으나, 여기서는 기존 db 세션 활용 시도
+                project_record = db.query(Project).filter(Project.document_id == document_id).first()
+                if project_record:
+                    project_record.parsed_tree = final_data["nodes"]
+                    log_usage(document_id, model_id, final_data.get("usage", {}), db, task_type="analysis")
+                    db.commit()
+
+                # 최종 완료 시그널
                 yield f"data: {json.dumps({'status': 'final', 'document_id': document_id, 'name': filename, 'pdf_url': f'/uploads/{pdf_filename}', 'tree': final_data['nodes']})}\n\n"
             else:
                 yield f"data: {json.dumps({'status': 'error', 'message': 'AI 분석 결과가 올바르지 않습니다.'})}\n\n"
-                
+
         except Exception as e:
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+            # AI 분석 실패 시 에러 메시지 전송 (document_id가 이미 DB에 있으므로 재시도 가능)
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e), 'document_id': document_id})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -461,30 +475,6 @@ async def save_project(request: ProjectSaveRequest, db: Session = Depends(get_db
     
     db.commit()
     return {"status": "success", "message": "Project saved successfully"}
-@router.post("/projects/{document_id}/idea/enhance")
-async def enhance_idea(document_id: str, request: IdeaEnhanceRequest, db: Session = Depends(get_db)):
-    """사용자의 아이디어를 마스터 브리프로 고도화합니다."""
-    if document_id != request.document_id:
-        raise HTTPException(status_code=400, detail="Document ID mismatch")
-        
-    project = db.query(Project).filter(Project.document_id == document_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    try:
-        result = await enhance_business_idea(request.idea_text, request.model_id)
-        
-        # 비용 기록
-        if result.get("usage"):
-            log_usage(document_id, request.model_id, result["usage"], db, task_type="idea_enhance")
-            
-        return {
-            "status": "success",
-            "master_brief": result["master_brief"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.post("/projects/{document_id}/idea/enhance-stream")
 async def enhance_idea_stream(
     document_id: str, 
@@ -501,7 +491,6 @@ async def enhance_idea_stream(
 
     async def event_generator():
         try:
-            from services.gemini_service import enhance_business_idea_stream
             async for chunk in enhance_business_idea_stream(request.idea_text, request.model_id):
                 # 방어 로직: chunk가 dict인지 확인
                 if not isinstance(chunk, dict):

@@ -152,26 +152,6 @@ export const api = {
     return response.json();
   },
 
-  enhanceIdea: async (documentId: string, ideaText: string, modelId: string = "models/gemini-3.1-pro-preview") => {
-    const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        document_id: documentId,
-        idea_text: ideaText,
-        model_id: modelId,
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(errorData.detail || `Idea enhance failed: ${response.statusText}`);
-    }
-    return response.json();
-  },
-
   enhanceIdeaStream: async (documentId: string, ideaText: string, modelId: string, onProgress: (msg: string) => void) => {
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance-stream`, {
       method: 'POST',
@@ -360,7 +340,7 @@ export const api = {
     return response.json();
   },
 
-  uploadDocumentStream: async (file: File, modelId: string, onProgress: (msg: string) => void) => {
+  uploadDocumentStream: async (file: File, modelId: string, onProgress: (msg: string, docId?: string) => void) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('model_id', modelId);
@@ -397,7 +377,10 @@ export const api = {
               onProgress(data.message || '오류 발생');
               throw new Error(data.message || 'Unknown stream error');
             }
-            if (data.message) onProgress(data.message);
+            if (data.message) {
+              // received 이벤트에서 document_id를 함께 전달 (AI 분석 실패 대비)
+              onProgress(data.message, data.document_id);
+            }
             if (data.status === 'final') result = data;
           } catch (e) {
             if (e instanceof Error && e.message === 'Unknown stream error' || (e as Error).message.includes('error')) {
@@ -410,6 +393,7 @@ export const api = {
     }
     return result;
   },
+
 
   reanalyzeProjectStream: async (documentId: string, modelId: string, onProgress: (msg: string) => void) => {
     const formData = new FormData();
