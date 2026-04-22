@@ -1424,7 +1424,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                         alert("저장 실패: " + err);
                                     }
                                 }}
-                                className="w-full py-4 bg-secondary text-on-secondary font-black text-sm rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-[0_12px_24px_-4px_rgba(56,107,245,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md flex items-center justify-center gap-2 transition-all shadow-lg"
+                                className="w-full py-4 bg-secondary text-on-secondary font-black text-sm rounded-xl shadow-[0_8px_16px_-4px_rgba(56,107,245,0.3)] hover:shadow-[0_12px_24px_-4px_rgba(56,107,245,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-md flex items-center justify-center gap-2 transition-all"
                             >
                                 <span className="material-symbols-outlined text-xl">save</span>
                                 💾 이 아이디어로 확정 및 저장
