@@ -491,7 +491,7 @@ async def enhance_idea_stream(
 
     async def event_generator():
         try:
-            async for chunk in enhance_business_idea_stream(request.idea_text, request.model_id):
+            async for chunk in enhance_business_idea_stream(request.idea_text, "", request.model_id, request.project_type):
                 # 방어 로직: chunk가 dict인지 확인
                 if not isinstance(chunk, dict):
                     print(f"[BACKEND] Skipping non-dict chunk: {chunk}")

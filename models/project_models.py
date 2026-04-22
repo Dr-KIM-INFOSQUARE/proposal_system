@@ -16,6 +16,7 @@ class IdeaEnhanceRequest(BaseModel):
     document_id: str
     idea_text: str
     model_id: str = "models/gemini-3.1-pro-preview"
+    project_type: str = "rd"
 
 class IdeaSaveRequest(BaseModel):
     document_id: str

@@ -292,6 +292,22 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
   };
 
   const [ideaMode, setIdeaMode] = useState<'guide' | 'free'>('guide');
+  const [projectType, setProjectType] = useState<'rd' | 'non_rd'>('rd');
+  const guideQuestions = projectType === 'rd' ? [
+    { key: 'q1', label: '1. 아이템 한 줄 요약', placeholder: '예: AI 기반 중고거래 사기 방지 앱', required: true },
+    { key: 'q2', label: '2. 해결하려는 문제점', placeholder: '예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화', required: false },
+    { key: 'q3', label: '3. 핵심 기술 및 차별성', placeholder: '예: 실시간 계좌 검증 및 대화 내역 NLP 분석', required: false },
+    { key: 'q4', label: '4. 타겟 고객 및 시장', placeholder: '예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자', required: false },
+    { key: 'q5', label: '5. 기대 효과', placeholder: '예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산', required: false },
+    { key: 'q6', label: '6. 기타 참고 자료', placeholder: '예: 주관기관 (주)비전아이티 - AI/빅데이터 전문기업, 특허 3건 보유 (영상인식 기반 이상탐지 등)\\n참여기관 (주)가시 - 블록체인 보안 전문기업, ISO 27001 인증', required: false },
+  ] : [
+    { key: 'q1', label: '1. 아이템 및 지원 분야 한 줄 요약', placeholder: '예: 해외 진출용 다국어 마케팅 카달로그 제작', required: true },
+    { key: 'q2', label: '2. 해결하려는 사업화 문제점/병목', placeholder: '예: 기존 국내용 카달로그만 있어 해외 바이어 발굴의 한계', required: false },
+    { key: 'q3', label: '3. 지원금 활용 및 실무 수행 계획', placeholder: '예: 영문/일문 카달로그 제작 및 글로벌 전시회 배포', required: false },
+    { key: 'q4', label: '4. 기업 추진 역량 및 외부 자원', placeholder: '예: 사내 해외영업팀 2명 보유, 전문 디자인 에이전시 협업', required: false },
+    { key: 'q5', label: '5. 기대 효과 및 단기 ROI (정량 목표)', placeholder: '예: 전시회 리드 100건 확보, 단기 수출액 50만불 달성', required: false },
+    { key: 'q6', label: '6. 기타 참고 자료', placeholder: '예: 이전 해외 전시회 참가 실적, 타겟 국가 바이어 리스트 등', required: false },
+  ];
   const [guideAnswers, setGuideAnswers] = useState({
     q1: '', q2: '', q3: '', q4: '', q5: '', q6: ''
   });
@@ -700,6 +716,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           try {
               const parsed = JSON.parse(props.initialIdeaData);
               if (parsed.mode) setIdeaMode(parsed.mode);
+              if (parsed.projectType) setProjectType(parsed.projectType);
               if (parsed.guideAnswers) {
                   setGuideAnswers(prev => ({...prev, ...parsed.guideAnswers}));
               }
@@ -709,6 +726,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
           }
       } else {
           setIdeaMode('guide');
+          setProjectType('rd');
           setGuideAnswers({ q1: '', q2: '', q3: '', q4: '', q5: '', q6: '' });
           setIdeaText('');
       }
@@ -919,7 +937,25 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                 </div>
                 
                 <div className="flex flex-col gap-2">
-                   <div className="flex flex-wrap items-center gap-2">
+                     <div className="flex flex-wrap items-center gap-2">
+                       {/* 사업 종류 탭 */}
+                       <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
+                         <button 
+                           onClick={() => setProjectType('rd')}
+                           className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${projectType === 'rd' ? 'bg-secondary text-on-secondary shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                         >
+                            <span className="material-symbols-outlined text-[16px]">science</span>
+                            R&D
+                         </button>
+                         <button 
+                           onClick={() => setProjectType('non_rd')}
+                           className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${projectType === 'non_rd' ? 'bg-secondary text-on-secondary shadow-md' : 'text-outline hover:text-on-surface hover:bg-surface-container-high'}`}
+                         >
+                            <span className="material-symbols-outlined text-[16px]">storefront</span>
+                            non-R&D
+                         </button>
+                       </div>
+                       
                      {/* 모드 전환 탭 */}
                      <div className="inline-flex bg-surface-container p-1 rounded-xl shadow-inner self-start">
                         <button 
@@ -974,14 +1010,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                          {/* 가이드 모드 미리보기 */}
                          {activeGuideTab === 'preview' ? (
                            <div className="bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-5 space-y-4">
-                             {[
-                               { key: 'q1', label: '1. 아이템 한 줄 요약', required: true },
-                               { key: 'q2', label: '2. 해결하려는 문제점', required: false },
-                               { key: 'q3', label: '3. 핵심 기술 및 차별성', required: false },
-                               { key: 'q4', label: '4. 타겟 고객 및 시장', required: false },
-                               { key: 'q5', label: '5. 기대 효과', required: false },
-                               { key: 'q6', label: '6. 기타 참고 자료', required: false },
-                             ].map(({ key, label }) => (
+                             {guideQuestions.map(({ key, label }) => (
                                <div key={key} className={`${key === 'q6' ? 'pt-3 border-t border-outline-variant/20' : ''}`}>
                                  <p className="text-[11px] font-black text-primary uppercase tracking-wider mb-1">{label}</p>
                                  {guideAnswers[key as keyof typeof guideAnswers] ? (
@@ -994,86 +1023,38 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                            </div>
                          ) : (
                            <>
-                         <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-on-surface">1. 아이템 한 줄 요약 <span className="text-error">*</span></label>
-                              <button
-                                onClick={() => { setGuidePopup({ field: 'q1', label: '1. 아이템 한 줄 요약', tab: 'edit' }); setGuidePopupValue(guideAnswers.q1); }}
-                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
-                                title="팝업으로 편집"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
-                                확장
-                              </button>
-                            </div>
-                            <textarea value={guideAnswers.q1} onChange={(e) => setGuideAnswers(p => ({...p, q1: e.target.value}))} disabled={isEnhancing} placeholder="예: AI 기반 중고거래 사기 방지 앱" className="auto-resize w-full min-h-[50px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
-                         </div>
-                         <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-on-surface">2. 해결하려는 문제점</label>
-                              <button
-                                onClick={() => { setGuidePopup({ field: 'q2', label: '2. 해결하려는 문제점', tab: 'edit' }); setGuidePopupValue(guideAnswers.q2); }}
-                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
-                                title="팝업으로 편집"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
-                                확장
-                              </button>
-                            </div>
-                            <textarea value={guideAnswers.q2} onChange={(e) => setGuideAnswers(p => ({...p, q2: e.target.value}))} disabled={isEnhancing} placeholder="예: 중고나라나 당근마켓에서 일어나는 사기로 인한 금전적 피해 완화" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
-                         </div>
-                         <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-on-surface">3. 핵심 기술 및 차별성</label>
-                              <button
-                                onClick={() => { setGuidePopup({ field: 'q3', label: '3. 핵심 기술 및 차별성', tab: 'edit' }); setGuidePopupValue(guideAnswers.q3); }}
-                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
-                                title="팝업으로 편집"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
-                                확장
-                              </button>
-                            </div>
-                            <textarea value={guideAnswers.q3} onChange={(e) => setGuideAnswers(p => ({...p, q3: e.target.value}))} disabled={isEnhancing} placeholder="예: 실시간 계좌 검증 및 대화 내역 NLP 분석" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
-                         </div>
-                         <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-on-surface">4. 타겟 고객 및 시장</label>
-                              <button
-                                onClick={() => { setGuidePopup({ field: 'q4', label: '4. 타겟 고객 및 시장', tab: 'edit' }); setGuidePopupValue(guideAnswers.q4); }}
-                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
-                                title="팝업으로 편집"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
-                                확장
-                              </button>
-                            </div>
-                            <textarea value={guideAnswers.q4} onChange={(e) => setGuideAnswers(p => ({...p, q4: e.target.value}))} disabled={isEnhancing} placeholder="예: 20~30대 1인 가구, 월 1회 이상 중고거래 이용자" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
-                         </div>
-                         <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-on-surface">5. 기대 효과</label>
-                              <button
-                                onClick={() => { setGuidePopup({ field: 'q5', label: '5. 기대 효과', tab: 'edit' }); setGuidePopupValue(guideAnswers.q5); }}
-                                className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
-                                title="팝업으로 편집"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
-                                확장
-                              </button>
-                            </div>
-                            <textarea value={guideAnswers.q5} onChange={(e) => setGuideAnswers(p => ({...p, q5: e.target.value}))} disabled={isEnhancing} placeholder="예: 연간 사기 피해액 30% 감소, 안전한 P2P 거래 문화 확산" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
-                         </div>
+                           {guideQuestions.slice(0, 5).map(q => (
+                             <div className="flex flex-col gap-1.5" key={q.key}>
+                                <div className="flex items-center justify-between">
+                                  <label className="text-sm font-bold text-on-surface">{q.label} {q.required && <span className="text-error">*</span>}</label>
+                                  <button
+                                    onClick={() => { setGuidePopup({ field: q.key as any, label: q.label, tab: 'edit' }); setGuidePopupValue(guideAnswers[q.key as keyof typeof guideAnswers]); }}
+                                    className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
+                                    title="팝업으로 편집"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                                    확장
+                                  </button>
+                                </div>
+                                <textarea 
+                                  value={guideAnswers[q.key as keyof typeof guideAnswers]} 
+                                  onChange={(e) => setGuideAnswers(p => ({...p, [q.key]: e.target.value}))} 
+                                  disabled={isEnhancing} 
+                                  placeholder={q.placeholder} 
+                                  className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" 
+                                />
+                             </div>
+                           ))}
 
                          {/* 6. 기타 참고 자료 */}
                          <div className="flex flex-col gap-1.5 pt-2 border-t border-outline-variant/20">
                             <div className="flex items-center justify-between">
                               <label className="text-sm font-bold text-on-surface flex items-center gap-2">
-                                6. 기타 참고 자료
+                                {guideQuestions[5].label}
                                 <span className="text-[10px] font-normal text-outline bg-surface-container-high px-2 py-0.5 rounded-full">선택사항</span>
                               </label>
                               <button
-                                onClick={() => { setGuidePopup({ field: 'q6', label: '6. 기타 참고 자료', tab: 'edit' }); setGuidePopupValue(guideAnswers.q6); }}
+                                onClick={() => { setGuidePopup({ field: 'q6', label: guideQuestions[5].label, tab: 'edit' }); setGuidePopupValue(guideAnswers.q6); }}
                                 className="flex items-center gap-1 text-[11px] text-outline hover:text-primary px-2 py-1 rounded-lg hover:bg-primary/5 transition-all"
                                 title="팝업으로 편집"
                               >
@@ -1082,7 +1063,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                               </button>
                             </div>
                             <p className="text-[11px] text-outline -mt-1">컨소시엄 역량, 보유 특허/인증, 핵심 기술력 등 AI가 참고할 추가 정보를 자유롭게 입력하세요.</p>
-                            <textarea value={guideAnswers.q6} onChange={(e) => setGuideAnswers(p => ({...p, q6: e.target.value}))} disabled={isEnhancing} placeholder="예: 주관기관 (주)비전아이티 - AI/빅데이터 전문기업, 특허 3건 보유 (영상인식 기반 이상탐지 등)\n참여기관 (주)가시 - 블록체인 보안 전문기업, ISO 27001 인증" className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
+                            <textarea value={guideAnswers.q6} onChange={(e) => setGuideAnswers(p => ({...p, q6: e.target.value}))} disabled={isEnhancing} placeholder={guideQuestions[5].placeholder} className="auto-resize w-full min-h-[70px] bg-surface-container-lowest border border-outline-variant/50 rounded-lg p-3 text-sm resize-y overflow-y-auto focus:ring-2 focus:ring-primary/20 outline-none transition-all placeholder:text-outline/40" />
 
                             {/* 파일 첨부 영역 */}
                             <div className="mt-1">
@@ -1188,8 +1169,8 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                         try {
                             let finalPrompt = '';
                             if (ideaMode === 'guide') {
-                               if (!guideAnswers.q1.trim()) return alert("1번 '아이템 한 줄 요약'은 필수입니다.");
-                               finalPrompt = `1. 아이템 한 줄 요약: ${guideAnswers.q1.trim()}\n2. 해결하려는 문제점: ${guideAnswers.q2.trim()}\n3. 핵심 기술 및 차별성: ${guideAnswers.q3.trim()}\n4. 타겟 고객 및 시장: ${guideAnswers.q4.trim()}\n5. 기대 효과: ${guideAnswers.q5.trim()}${guideAnswers.q6.trim() ? `\n6. 기타 참고 자료: ${guideAnswers.q6.trim()}` : ''}`;
+                               if (!guideAnswers.q1.trim()) return alert(`1번 '${guideQuestions[0].label}'은 필수입니다.`);
+                               finalPrompt = `${guideQuestions[0].label}: ${guideAnswers.q1.trim()}\n${guideQuestions[1].label}: ${guideAnswers.q2.trim()}\n${guideQuestions[2].label}: ${guideAnswers.q3.trim()}\n${guideQuestions[3].label}: ${guideAnswers.q4.trim()}\n${guideQuestions[4].label}: ${guideAnswers.q5.trim()}${guideAnswers.q6.trim() ? `\n${guideQuestions[5].label}: ${guideAnswers.q6.trim()}` : ''}`;
                             } else {
                                if (!ideaText.trim()) return alert("자유 입력 모드에 내용을 입력해주세요.");
                                finalPrompt = ideaText.trim();
@@ -1228,6 +1209,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                               try {
                                   const initialIdeaJsonToSave = JSON.stringify({
                                       mode: ideaMode,
+                                      projectType,
                                       guideAnswers,
                                       ideaText
                                   });
@@ -1240,7 +1222,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
                                   
                                   if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, "AI가 최신 정보를 검색하며 아이디어를 고도화하고 있습니다...");
                                   
-                                  const res = await api.enhanceIdeaStream(currentDocId, finalPrompt, props.selectedModel, (msg) => {
+                                  const res = await api.enhanceIdeaStream(currentDocId, finalPrompt, props.selectedModel, projectType, (msg) => {
                                       if (props.onEnhanceStateChange) props.onEnhanceStateChange(true, msg);
                                   });
                                   
@@ -1433,7 +1415,7 @@ export const AnalysisWorkflow: React.FC<AnalysisWorkflowProps> = (props) => {
 
                                     let finalMasterBriefToSave = masterBrief;
                                     if (masterBriefData) finalMasterBriefToSave = JSON.stringify(masterBriefData);
-                                    const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, guideAnswers, ideaText });
+                                    const initialIdeaJsonToSave = JSON.stringify({ mode: ideaMode, projectType, guideAnswers, ideaText });
                                     try {
                                         await api.saveMasterBrief(currentDocId, finalMasterBriefToSave, initialIdeaJsonToSave);
                                         handleStepCompletion(2);

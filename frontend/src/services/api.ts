@@ -152,7 +152,7 @@ export const api = {
     return response.json();
   },
 
-  enhanceIdeaStream: async (documentId: string, ideaText: string, modelId: string, onProgress: (msg: string) => void) => {
+  enhanceIdeaStream: async (documentId: string, ideaText: string, modelId: string, projectType: string, onProgress: (msg: string) => void) => {
     const response = await fetch(`${API_BASE_URL}/projects/${documentId}/idea/enhance-stream`, {
       method: 'POST',
       headers: {
@@ -162,6 +162,7 @@ export const api = {
         document_id: documentId,
         idea_text: ideaText,
         model_id: modelId,
+        project_type: projectType,
       }),
     });
 
